@@ -1,0 +1,36 @@
+{
+  "name": "treediagram",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run build:packages && node apps/server/dist/index.js",
+    "dev:web": "npm run dev -w @treediagram/web",
+    "build:packages": "tsc -b",
+    "build": "tsc -b && npm run build -w @treediagram/web",
+    "typecheck": "tsc -b && tsc -p apps/web/tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "test:model-smoke": "vitest run --project model-smoke",
+    "workspace:init": "node scripts/init-workspace.ts",
+    "seed:demo": "node scripts/seed-demo.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^24.0.0",
+    "prettier": "^3.6.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
