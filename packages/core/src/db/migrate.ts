@@ -21,15 +21,14 @@ function migrationsDir(): string {
  * 数据库版本高于程序支持版本时立即失败。
  */
 export function runMigrations(db: SqliteDatabase, now: string): AppliedMigration[] {
-  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-  )`);
-
-  const currentVersion =
-    (db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as { v: number | null })
-      .v ?? 0;
+  const tableExists =
+    db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+      .get() !== undefined;
+  const currentVersion = tableExists
+    ? ((db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as { v: number | null })
+        .v ?? 0)
+    : 0;
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
     throw new DomainError(
       'CORRUPT_PERSISTED_DATA',

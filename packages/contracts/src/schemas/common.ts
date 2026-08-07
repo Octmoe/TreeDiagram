@@ -1,4 +1,4 @@
-import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
+import { Type, type Static, type TLiteral, type TSchema, type TString } from '@sinclair/typebox';
 import type {
   ChangeSetId,
   DelegationPolicyId,
@@ -39,19 +39,21 @@ import {
 export const IdSchema = Type.String({ minLength: 36, maxLength: 36 });
 export const IsoTimestampSchema = Type.String({ minLength: 20, maxLength: 40 });
 
-// 品牌 ID schema：静态类型即品牌类型，JSON Schema 层面仍是普通 string。
-const idShape = { type: 'string', minLength: 36, maxLength: 36 } as const;
-export const ProjectIdSchema = Type.Unsafe<ProjectId>(idShape);
-export const NodeIdSchema = Type.Unsafe<NodeId>(idShape);
-export const NodeRevisionIdSchema = Type.Unsafe<NodeRevisionId>(idShape);
-export const RelationIdSchema = Type.Unsafe<RelationId>(idShape);
-export const RelationRevisionIdSchema = Type.Unsafe<RelationRevisionId>(idShape);
-export const ChangeSetIdSchema = Type.Unsafe<ChangeSetId>(idShape);
-export const ReleaseIdSchema = Type.Unsafe<ReleaseId>(idShape);
-export const SourceAssetIdSchema = Type.Unsafe<SourceAssetId>(idShape);
-export const DelegationPolicyIdSchema = Type.Unsafe<DelegationPolicyId>(idShape);
-export const WorkflowRunIdSchema = Type.Unsafe<WorkflowRunId>(idShape);
-export const ReviewItemIdSchema = Type.Unsafe<ReviewItemId>(idShape);
+// 品牌 ID schema：运行时是普通 string schema（可正常 Value.Check / ajv 校验），
+// 静态类型通过交叉 { static: Brand } 收窄为品牌类型。
+const idShape = { minLength: 36, maxLength: 36 } as const;
+type BrandedId<B> = TString & { static: B };
+export const ProjectIdSchema = Type.String(idShape) as BrandedId<ProjectId>;
+export const NodeIdSchema = Type.String(idShape) as BrandedId<NodeId>;
+export const NodeRevisionIdSchema = Type.String(idShape) as BrandedId<NodeRevisionId>;
+export const RelationIdSchema = Type.String(idShape) as BrandedId<RelationId>;
+export const RelationRevisionIdSchema = Type.String(idShape) as BrandedId<RelationRevisionId>;
+export const ChangeSetIdSchema = Type.String(idShape) as BrandedId<ChangeSetId>;
+export const ReleaseIdSchema = Type.String(idShape) as BrandedId<ReleaseId>;
+export const SourceAssetIdSchema = Type.String(idShape) as BrandedId<SourceAssetId>;
+export const DelegationPolicyIdSchema = Type.String(idShape) as BrandedId<DelegationPolicyId>;
+export const WorkflowRunIdSchema = Type.String(idShape) as BrandedId<WorkflowRunId>;
+export const ReviewItemIdSchema = Type.String(idShape) as BrandedId<ReviewItemId>;
 
 // 领域字符串上限（HTTP contract 统一口径）。
 export const LIMITS = {
