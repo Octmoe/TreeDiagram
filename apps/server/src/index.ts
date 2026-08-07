@@ -1,7 +1,9 @@
+import { existsSync } from 'node:fs';
 import { systemClock, WorkspaceService } from '@treediagram/core';
 import { buildServer } from './app.js';
 import { loadServerConfig } from './config.js';
 import type { ServerContext } from './context.js';
+import { defaultWebDistDir } from './static.js';
 import { unconfiguredWorkflowRunner } from './workflow-runner.js';
 
 /**
@@ -28,6 +30,7 @@ async function main(): Promise<void> {
       port: config.port,
       projectStatus: project.status,
       schemaVersion: workspace.meta.schemaVersion,
+      staticUi: existsSync(defaultWebDistDir()),
     },
     'TreeDiagram server 启动',
   );

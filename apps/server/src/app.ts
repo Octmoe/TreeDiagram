@@ -12,6 +12,7 @@ import { registerNodeRoutes } from './routes/nodes.js';
 import { registerProjectRoutes } from './routes/project.js';
 import { registerRelationRoutes } from './routes/relations.js';
 import { registerReleaseRoutes } from './routes/release.js';
+import { registerStaticUi } from './static.js';
 import { registerSourceRoutes } from './routes/sources.js';
 import { registerTreeRoutes } from './routes/tree.js';
 import { registerWorkflowRoutes } from './routes/workflows.js';
@@ -52,6 +53,7 @@ export function buildServer(ctx: ServerContext): AppInstance {
 
   registerEnvelope(app);
   registerErrorHandler(app);
+  registerStaticUi(app);
 
   // 鉴权：/health 公开；其余 /api/v1/* 需要 Bearer token（API_CONTRACT §2）。
   app.addHook('preHandler', async (request) => {

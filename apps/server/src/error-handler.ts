@@ -1,4 +1,3 @@
-import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AppInstance } from './types.js';
 import type { DomainErrorCode } from '@treediagram/contracts';
 import { DomainError } from '@treediagram/core';
@@ -83,10 +82,5 @@ export function registerErrorHandler(app: AppInstance): void {
 
     request.log.error({ requestId, err: error }, '未预期错误');
     return reply.code(500).send(errorBody('INTERNAL_ERROR', '未预期错误', {}, requestId));
-  });
-
-  app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
-    const requestId = request.requestId ?? 'unknown';
-    return reply.code(404).send(errorBody('NOT_FOUND', '路由不存在', {}, requestId));
   });
 }
