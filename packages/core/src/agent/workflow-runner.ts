@@ -6,15 +6,23 @@ import { resolveDelegation } from '../domain/delegation-resolver.js';
 import { newId } from '../ids.js';
 import type { ServiceContext, Author } from '../services/types.js';
 import { ChangeSetService } from '../services/change-set-service.js';
+import { NodeService } from '../services/node-service.js';
 import type { ProjectRecord } from '../db/repositories/project.js';
 import type { WorkflowRunId } from '@treediagram/contracts';
 import type { ModelProvider } from './model-provider.js';
-import { buildDeriveContext, buildInitializeContext } from './context-builder.js';
+import {
+  buildDeriveContext,
+  buildGrillContext,
+  buildInitializeContext,
+  buildUnboxContext,
+} from './context-builder.js';
 import { ProposalApplier } from './proposal-applier.js';
 import {
   DERIVE_INSTRUCTIONS,
+  GRILL_INSTRUCTIONS,
   INITIALIZE_EXTRACT_INSTRUCTIONS,
   INITIALIZE_ROOT_INSTRUCTIONS,
+  UNBOX_INSTRUCTIONS,
 } from './prompts/index.js';
 
 /**
@@ -37,9 +45,13 @@ interface RunCheckpoint {
   contextHash: string | null;
   proposal: unknown | null;
   proposals?: unknown[]; // initialize 两步提案
+  /** unbox 容器候选修订（幂等：resume 不重复创建）。 */
+  containerRevisionId?: string | null;
   providerResponseId: string | null;
   usage: Record<string, unknown> | null;
   applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
+  /** ai_managed 自动 adopt 结果（§10）。 */
+  autoAdopted?: boolean;
 }
 
 const EMPTY_CHECKPOINT: RunCheckpoint = {
@@ -62,6 +74,7 @@ function checkpointOf(run: WorkflowRun): RunCheckpoint {
 export class CoreWorkflowRunner {
   private readonly changeSets: ChangeSetService;
   private readonly applier: ProposalApplier;
+  private readonly nodes: NodeService;
   private readonly abortControllers = new Map<string, AbortController>();
   private readonly executing = new Set<string>();
 
@@ -71,6 +84,7 @@ export class CoreWorkflowRunner {
   ) {
     this.changeSets = new ChangeSetService(ctx);
     this.applier = new ProposalApplier(ctx);
+    this.nodes = new NodeService(ctx);
   }
 
   private get db() {
@@ -104,8 +118,8 @@ export class CoreWorkflowRunner {
   }
 
   private assertAvailable(project: ProjectRecord, workflowType: WorkflowType): void {
-    if (workflowType === 'grill' || workflowType === 'unbox' || workflowType === 'reevaluate') {
-      throw new DomainError('WORKFLOW_NOT_AVAILABLE', `${workflowType} 工作流在后续里程碑提供`, {
+    if (workflowType === 'reevaluate') {
+      throw new DomainError('WORKFLOW_NOT_AVAILABLE', 'reevaluate 工作流在 M5 提供', {
         workflowType,
       });
     }
@@ -114,8 +128,11 @@ export class CoreWorkflowRunner {
         status: project.status,
       });
     }
-    if (workflowType === 'derive' && project.status !== 'consistent') {
-      throw new DomainError('WORKFLOW_NOT_AVAILABLE', 'derive 需要 consistent 状态', {
+    if (
+      (workflowType === 'derive' || workflowType === 'grill' || workflowType === 'unbox') &&
+      project.status !== 'consistent'
+    ) {
+      throw new DomainError('WORKFLOW_NOT_AVAILABLE', `${workflowType} 需要 consistent 状态`, {
         status: project.status,
       });
     }
@@ -289,20 +306,48 @@ export class CoreWorkflowRunner {
           return asset;
         });
         context = buildInitializeContext(sources);
+      } else if (run.workflowType === 'unbox') {
+        // §13.4：先确定性地创建 unbox_exploration 容器候选（幂等），再构建边界探索上下文。
+        if (!checkpoint.containerRevisionId) {
+          const container = this.nodes.createCandidateNode(
+            project,
+            'topic',
+            {
+              displayTitle: `Unbox 探索 ${startedAt}`,
+              contentText: '由 Unbox 工作流创建的默认容器，承载跳出当前约束的平行候选。',
+              roles: ['unbox_exploration'],
+              attributes: {},
+              approvalState: 'draft',
+              epistemicState: null,
+            },
+            author,
+          );
+          checkpoint.containerRevisionId = container.revision.id;
+        }
+        const containerRevision = this.db.repos.node.getRevisionById(
+          checkpoint.containerRevisionId,
+        );
+        if (!containerRevision) {
+          throw new DomainError('CORRUPT_PERSISTED_DATA', 'unbox 容器修订缺失', {
+            revisionId: checkpoint.containerRevisionId,
+          });
+        }
+        context = buildUnboxContext(
+          this.currentWorkingSet(project),
+          { nodeId: containerRevision.nodeId, revisionId: containerRevision.id },
+          (run.input['focusInstruction'] as string | null) ?? null,
+        );
       } else {
         const targetNodeId = run.targetNodeId;
         if (!targetNodeId) {
-          throw new DomainError('VALIDATION_FAILED', 'derive 需要 targetNodeId');
+          throw new DomainError('VALIDATION_FAILED', `${run.workflowType} 需要 targetNodeId`);
         }
-        const live = this.changeSets.getLive(project);
-        const ws = live
-          ? this.changeSets.buildViews(live).working
-          : this.changeSets.buildReleaseView(project);
-        context = buildDeriveContext(
-          ws,
-          targetNodeId,
-          (run.input['focusInstruction'] as string | null) ?? null,
-        );
+        const ws = this.currentWorkingSet(project);
+        const focusInstruction = (run.input['focusInstruction'] as string | null) ?? null;
+        context =
+          run.workflowType === 'grill'
+            ? buildGrillContext(ws, targetNodeId, focusInstruction)
+            : buildDeriveContext(ws, targetNodeId, focusInstruction);
       }
       checkpoint.contextHash = sha256Hex(JSON.stringify(context));
       checkpoint.steps.push('load_context');
@@ -338,10 +383,15 @@ export class CoreWorkflowRunner {
             usage: first.usage as unknown as Record<string, unknown>,
           });
 
+          // 第二步输入附带第一步提案的 proposalRef 摘要，使 root 步可用 refKind="proposal" 关联
+          const priorStep = summarizeProposalRefs(first.value);
           const second = await this.config.provider.generateStructured({
             model: this.config.model,
             instructions: INITIALIZE_ROOT_INSTRUCTIONS,
-            input: JSON.stringify(context),
+            input: JSON.stringify({
+              ...context,
+              data: { ...(context['data'] as object), priorStep },
+            }),
             outputSchemaName: 'DesignProposal',
             outputSchema: DesignProposalSchema,
             reasoningEffort: 'medium',
@@ -354,13 +404,22 @@ export class CoreWorkflowRunner {
           // 合并两步提案（root 步在前，保证 root 节点先建）
           checkpoint.proposal = mergeProposals([second.value, first.value]);
         } else {
+          // derive/grill/unbox 单次生成；grill/unbox 用 high reasoning（§12.2 默认推理档）
+          const instructions =
+            run.workflowType === 'grill'
+              ? GRILL_INSTRUCTIONS
+              : run.workflowType === 'unbox'
+                ? UNBOX_INSTRUCTIONS
+                : DERIVE_INSTRUCTIONS;
+          const reasoningEffort =
+            run.workflowType === 'grill' || run.workflowType === 'unbox' ? 'high' : 'medium';
           const result = await this.config.provider.generateStructured({
             model: this.config.model,
-            instructions: DERIVE_INSTRUCTIONS,
+            instructions,
             input: JSON.stringify(context),
             outputSchemaName: 'DesignProposal',
             outputSchema: DesignProposalSchema,
-            reasoningEffort: 'medium',
+            reasoningEffort,
             safetyIdentifier: this.config.safetyIdentifier,
             signal: controller.signal,
           });
@@ -397,8 +456,10 @@ export class CoreWorkflowRunner {
       this.assertNotCancelled(runId);
 
       // ---- apply_proposal（幂等：已应用则跳过）----
+      let autoAdoptBlocked: string | null = null;
+      const effectivePolicy = this.resolveEffectivePolicy(run);
       if (!checkpoint.applied) {
-        const effectivePolicy = this.resolveEffectivePolicy(run);
+        sanitizeProposal(run.workflowType, checkpoint.proposal);
         const result = this.db.transaction(() =>
           this.applier.apply(project, run, checkpoint.proposal, { effectivePolicy }, agentAuthor),
         );
@@ -412,6 +473,30 @@ export class CoreWorkflowRunner {
           checkpoint: checkpoint as unknown as Record<string, unknown>,
           changeSetId: changeSet?.id ?? null,
         });
+
+        // ---- ai_managed 自动 adopt（§10）：越界/含 root 变更时转 waiting_user ----
+        if (
+          effectivePolicy &&
+          changeSet &&
+          (run.workflowType === 'derive' || run.workflowType === 'grill')
+        ) {
+          try {
+            this.changeSets.adopt(changeSet.id, agentAuthor, {
+              workflowRunId: run.id,
+              policyId: effectivePolicy.id,
+            });
+            checkpoint.autoAdopted = true;
+          } catch (error) {
+            if (error instanceof DomainError && error.code === 'AI_SCOPE_VIOLATION') {
+              autoAdoptBlocked = error.message;
+            } else {
+              throw error;
+            }
+          }
+          run = this.patch(runId, {
+            checkpoint: checkpoint as unknown as Record<string, unknown>,
+          });
+        }
       } else {
         checkpoint.steps.push('apply_proposal');
       }
@@ -419,7 +504,9 @@ export class CoreWorkflowRunner {
       // ---- finish ----
       const hasBlockingQuestion = proposal.questionsForUser.some((q) => q.blocking);
       const finalStatus =
-        hasBlockingQuestion || proposal.stopReason === 'needs_user' ? 'waiting_user' : 'succeeded';
+        hasBlockingQuestion || proposal.stopReason === 'needs_user' || autoAdoptBlocked !== null
+          ? 'waiting_user'
+          : 'succeeded';
       const now = this.clock.now();
       this.db.repos.workflowRun.update(
         runId,
@@ -434,6 +521,8 @@ export class CoreWorkflowRunner {
             nodeActionCount: proposal.nodeActions.length,
             relationActionCount: proposal.relationActions.length,
             applied: checkpoint.applied,
+            autoAdopted: checkpoint.autoAdopted === true,
+            autoAdoptBlocked,
           },
           finishedAt: finalStatus === 'succeeded' ? now : null,
         },
@@ -463,15 +552,20 @@ export class CoreWorkflowRunner {
     }
   }
 
+  /** 当前工作视图：有 live ChangeSet 用 working view，否则用 current Release 视图。 */
+  private currentWorkingSet(project: ProjectRecord) {
+    const live = this.changeSets.getLive(project);
+    return live
+      ? this.changeSets.buildViews(live).working
+      : this.changeSets.buildReleaseView(project);
+  }
+
   /** ai_confirmed 授权来源：derive 目标节点的有效托管策略（§10/§12.4）。 */
   private resolveEffectivePolicy(run: WorkflowRun) {
     if (!run.targetNodeId) return null;
     const active = this.db.repos.delegation.listActiveByProject(run.projectId);
-    const live = this.changeSets.getLive(this.db.repos.project.requireSingleton());
-    const ws = live
-      ? this.changeSets.buildViews(live).working
-      : this.changeSets.buildReleaseView(this.db.repos.project.requireSingleton());
-    const result = resolveDelegation(run.targetNodeId, ws, active);
+    const project = this.db.repos.project.requireSingleton();
+    const result = resolveDelegation(run.targetNodeId, this.currentWorkingSet(project), active);
     if (result.mode !== 'ai_managed' || !result.policyId) return null;
     return this.db.repos.delegation.getById(result.policyId);
   }
@@ -516,4 +610,53 @@ function mergeProposals(proposals: unknown[]): unknown {
     if (merged.stopReason === 'completed') merged.stopReason = p.stopReason;
   }
   return merged;
+}
+
+/** initialize 第二步输入摘要：第一步提案的 proposalRef → 标题/类型，供 refKind="proposal" 引用。 */
+function summarizeProposalRefs(proposal: unknown): unknown {
+  const p = proposal as {
+    nodeActions?: Array<{ proposalRef: string; nodeType: string; displayTitle: string }>;
+  };
+  return {
+    nodeRefs: (p.nodeActions ?? []).map((a) => ({
+      proposalRef: a.proposalRef,
+      nodeType: a.nodeType,
+      displayTitle: a.displayTitle,
+    })),
+  };
+}
+
+/**
+ * 工作流特定提案修正（§13.3/§13.4）：
+ * - grill：revise 一律强制 draft（不得直接 revise 已确认节点，由用户后续裁决）；
+ * - unbox：剥离 root 角色（探索不触碰 root），全部输出仅 draft/tentative（由 applier 降级保证）。
+ * 直接原地修改 checkpoint 中的 proposal，使持久化的 checkpoint 反映真实应用内容。
+ */
+function sanitizeProposal(workflowType: WorkflowType, rawProposal: unknown): void {
+  const proposal = rawProposal as {
+    nodeActions: Array<{ operation: string; approvalSuggestion: string; roles: string[] }>;
+    relationActions: Array<{ operation: string; approvalSuggestion: string }>;
+    warnings: string[];
+  };
+  if (workflowType === 'grill') {
+    let forced = 0;
+    for (const action of [...proposal.nodeActions, ...proposal.relationActions]) {
+      if (action.operation === 'revise' && action.approvalSuggestion !== 'draft') {
+        action.approvalSuggestion = 'draft';
+        forced += 1;
+      }
+    }
+    if (forced > 0) {
+      proposal.warnings.push(`grill：${forced} 个 revise 操作已强制降级为 draft（§13.3）`);
+    }
+  }
+  if (workflowType === 'unbox') {
+    for (const action of proposal.nodeActions) {
+      const idx = action.roles.indexOf('root');
+      if (idx >= 0) {
+        action.roles.splice(idx, 1);
+        proposal.warnings.push('unbox：已剥离模型输出的 root 角色（§13.4 探索不触碰 root）');
+      }
+    }
+  }
 }

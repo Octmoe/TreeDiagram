@@ -363,22 +363,20 @@ describe('M3 可用性规则（§13）', () => {
     }
   });
 
-  it('grill/unbox/reevaluate 在 M3 不可用', () => {
+  it('reevaluate 在 M5 前不可用（grill/unbox 自 M4 起可用）', () => {
     const ws = makeTestWorkspace();
     setConsistent(ws);
     const runner = makeRunner(ws, FakeModelProvider.scripted([]));
-    for (const workflowType of ['grill', 'unbox', 'reevaluate'] as const) {
-      try {
-        runner.start(freshProject(ws), {
-          workflowType,
-          targetNodeId: null,
-          sourceAssetIds: [],
-          focusInstruction: null,
-        });
-        expect.unreachable();
-      } catch (error) {
-        expect((error as DomainError).code).toBe('WORKFLOW_NOT_AVAILABLE');
-      }
+    try {
+      runner.start(freshProject(ws), {
+        workflowType: 'reevaluate',
+        targetNodeId: null,
+        sourceAssetIds: [],
+        focusInstruction: null,
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as DomainError).code).toBe('WORKFLOW_NOT_AVAILABLE');
     }
   });
 });
