@@ -4,8 +4,13 @@ import type { RelationType } from '../enums.js';
 import {
   ApprovalStateSchema,
   AuthorKindSchema,
+  ChangeSetIdSchema,
   IdSchema,
   IsoTimestampSchema,
+  NodeRevisionIdSchema,
+  ProjectIdSchema,
+  RelationIdSchema,
+  RelationRevisionIdSchema,
   LIMITS,
   Nullable,
   RelationTypeSchema,
@@ -39,8 +44,8 @@ export function checkRelationAttributes(relationType: RelationType, attributes: 
 
 export const RelationSchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
+    id: RelationIdSchema,
+    projectId: ProjectIdSchema,
     relationType: RelationTypeSchema,
     authorKind: AuthorKindSchema,
     authorRef: Nullable(Type.String({ maxLength: LIMITS.authorRef })),
@@ -52,17 +57,17 @@ export type Relation = Static<typeof RelationSchema>;
 
 export const RelationRevisionSchema = Type.Object(
   {
-    id: IdSchema,
-    relationId: IdSchema,
-    createdInChangeSetId: IdSchema,
+    id: RelationRevisionIdSchema,
+    relationId: RelationIdSchema,
+    createdInChangeSetId: ChangeSetIdSchema,
     revisionNumber: Type.Integer({ minimum: 1 }),
-    fromNodeRevisionId: IdSchema,
-    toNodeRevisionId: IdSchema,
+    fromNodeRevisionId: NodeRevisionIdSchema,
+    toNodeRevisionId: NodeRevisionIdSchema,
     rationaleText: Type.String({ minLength: 1, maxLength: LIMITS.rationale }),
     attributes: RelationAttributesSchema,
     approvalState: ApprovalStateSchema,
     authorization: Nullable(AuthorizationSchema),
-    supersedesRelationRevisionId: Nullable(IdSchema),
+    supersedesRelationRevisionId: Nullable(RelationRevisionIdSchema),
     authorKind: AuthorKindSchema,
     authorRef: Nullable(Type.String({ maxLength: LIMITS.authorRef })),
     createdAt: IsoTimestampSchema,

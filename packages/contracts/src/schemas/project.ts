@@ -4,6 +4,11 @@ import {
   DelegationModeSchema,
   IdSchema,
   IsoTimestampSchema,
+  NodeIdSchema,
+  ProjectIdSchema,
+  ReleaseIdSchema,
+  SourceAssetIdSchema,
+  DelegationPolicyIdSchema,
   LIMITS,
   Nullable,
   ProjectStateSchema,
@@ -12,10 +17,10 @@ import {
 
 export const ProjectSummarySchema = Type.Object(
   {
-    id: IdSchema,
+    id: ProjectIdSchema,
     name: Type.String({ minLength: 1, maxLength: LIMITS.projectName }),
     status: ProjectStateSchema,
-    currentReleaseId: Nullable(IdSchema),
+    currentReleaseId: Nullable(ReleaseIdSchema),
     createdAt: IsoTimestampSchema,
     updatedAt: IsoTimestampSchema,
   },
@@ -26,7 +31,7 @@ export type ProjectSummary = Static<typeof ProjectSummarySchema>;
 export const ProjectStatusResponseSchema = Type.Object(
   {
     status: ProjectStateSchema,
-    currentReleaseId: Nullable(IdSchema),
+    currentReleaseId: Nullable(ReleaseIdSchema),
     currentReleaseVersion: Nullable(Type.Integer({ minimum: 1 })),
     blockedReason: Nullable(Type.String({ maxLength: LIMITS.blockedReason })),
   },
@@ -38,8 +43,8 @@ export type ProjectStatusResponse = Static<typeof ProjectStatusResponseSchema>;
 
 export const SourceAssetMetaSchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
+    id: SourceAssetIdSchema,
+    projectId: ProjectIdSchema,
     kind: SourceKindSchema,
     originalName: Nullable(Type.String({ maxLength: LIMITS.originalName })),
     mediaType: Type.String({ maxLength: LIMITS.mediaType }),
@@ -73,9 +78,9 @@ export type CreateSourceRequest = Static<typeof CreateSourceRequestSchema>;
 
 export const DelegationPolicySchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
-    scopeNodeId: IdSchema,
+    id: DelegationPolicyIdSchema,
+    projectId: ProjectIdSchema,
+    scopeNodeId: NodeIdSchema,
     mode: DelegationModeSchema,
     authorKind: AuthorKindSchema,
     authorRef: Nullable(Type.String({ maxLength: LIMITS.authorRef })),
@@ -95,10 +100,10 @@ export type SetDelegationRequest = Static<typeof SetDelegationRequestSchema>;
 /** 节点视角的托管解析结果：生效模式与来源。 */
 export const DelegationResolutionSchema = Type.Object(
   {
-    nodeId: IdSchema,
+    nodeId: NodeIdSchema,
     mode: DelegationModeSchema,
-    policyId: Nullable(IdSchema),
-    inheritedFromNodeId: Nullable(IdSchema),
+    policyId: Nullable(DelegationPolicyIdSchema),
+    inheritedFromNodeId: Nullable(NodeIdSchema),
     explicitPolicy: Nullable(DelegationPolicySchema),
     warnings: Type.Array(Type.String()),
   },

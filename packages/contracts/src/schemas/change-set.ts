@@ -2,8 +2,12 @@ import { Type, type Static } from '@sinclair/typebox';
 import {
   ChangeSetStatusSchema,
   ConsistencyIssueCodeSchema,
+  ChangeSetIdSchema,
   IdSchema,
   IsoTimestampSchema,
+  ProjectIdSchema,
+  ReleaseIdSchema,
+  ReviewItemIdSchema,
   LIMITS,
   Nullable,
   ReviewEntityKindSchema,
@@ -13,14 +17,14 @@ import {
 
 export const ChangeSetSchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
-    baseReleaseId: Nullable(IdSchema),
+    id: ChangeSetIdSchema,
+    projectId: ProjectIdSchema,
+    baseReleaseId: Nullable(ReleaseIdSchema),
     status: ChangeSetStatusSchema,
     title: Type.String({ maxLength: LIMITS.changeSetTitle }),
     description: Type.String({ maxLength: LIMITS.changeSetDescription }),
     adoptedAt: Nullable(IsoTimestampSchema),
-    publishedReleaseId: Nullable(IdSchema),
+    publishedReleaseId: Nullable(ReleaseIdSchema),
     createdAt: IsoTimestampSchema,
     updatedAt: IsoTimestampSchema,
   },
@@ -53,8 +57,8 @@ export type ChangeSetCurrentResponse = Static<typeof ChangeSetCurrentResponseSch
 
 export const ReviewItemSchema = Type.Object(
   {
-    id: IdSchema,
-    changeSetId: IdSchema,
+    id: ReviewItemIdSchema,
+    changeSetId: ChangeSetIdSchema,
     entityKind: ReviewEntityKindSchema,
     entityRevisionId: Nullable(IdSchema),
     reasonCode: Type.String({ minLength: 1, maxLength: LIMITS.reviewReasonCode }),

@@ -1,7 +1,12 @@
 import { Type, type Static } from '@sinclair/typebox';
 import {
+  ChangeSetIdSchema,
   IdSchema,
   IsoTimestampSchema,
+  NodeIdSchema,
+  ProjectIdSchema,
+  SourceAssetIdSchema,
+  WorkflowRunIdSchema,
   LIMITS,
   Nullable,
   WorkflowRunStatusSchema,
@@ -10,11 +15,11 @@ import {
 
 export const WorkflowRunSchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
-    changeSetId: Nullable(IdSchema),
+    id: WorkflowRunIdSchema,
+    projectId: ProjectIdSchema,
+    changeSetId: Nullable(ChangeSetIdSchema),
     workflowType: WorkflowTypeSchema,
-    targetNodeId: Nullable(IdSchema),
+    targetNodeId: Nullable(NodeIdSchema),
     status: WorkflowRunStatusSchema,
     currentStep: Type.String({ maxLength: LIMITS.workflowStep }),
     input: Type.Record(Type.String(), Type.Unknown()),
@@ -37,8 +42,8 @@ export type WorkflowRun = Static<typeof WorkflowRunSchema>;
 export const StartWorkflowRequestSchema = Type.Object(
   {
     workflowType: WorkflowTypeSchema,
-    targetNodeId: Nullable(IdSchema),
-    sourceAssetIds: Type.Array(IdSchema, { maxItems: 20 }),
+    targetNodeId: Nullable(NodeIdSchema),
+    sourceAssetIds: Type.Array(SourceAssetIdSchema, { maxItems: 20 }),
     focusInstruction: Nullable(Type.String({ maxLength: LIMITS.focusInstruction })),
   },
   { additionalProperties: false },

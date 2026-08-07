@@ -1,4 +1,17 @@
-import { Type, type Static, type TSchema } from '@sinclair/typebox';
+import { Type, type Static, type TLiteral, type TSchema } from '@sinclair/typebox';
+import type {
+  ChangeSetId,
+  DelegationPolicyId,
+  NodeId,
+  NodeRevisionId,
+  ProjectId,
+  RelationId,
+  RelationRevisionId,
+  ReleaseId,
+  ReviewItemId,
+  SourceAssetId,
+  WorkflowRunId,
+} from '../ids.js';
 import {
   APPROVAL_STATES,
   AUTH_SCOPES,
@@ -26,6 +39,20 @@ import {
 export const IdSchema = Type.String({ minLength: 36, maxLength: 36 });
 export const IsoTimestampSchema = Type.String({ minLength: 20, maxLength: 40 });
 
+// 品牌 ID schema：静态类型即品牌类型，JSON Schema 层面仍是普通 string。
+const idShape = { type: 'string', minLength: 36, maxLength: 36 } as const;
+export const ProjectIdSchema = Type.Unsafe<ProjectId>(idShape);
+export const NodeIdSchema = Type.Unsafe<NodeId>(idShape);
+export const NodeRevisionIdSchema = Type.Unsafe<NodeRevisionId>(idShape);
+export const RelationIdSchema = Type.Unsafe<RelationId>(idShape);
+export const RelationRevisionIdSchema = Type.Unsafe<RelationRevisionId>(idShape);
+export const ChangeSetIdSchema = Type.Unsafe<ChangeSetId>(idShape);
+export const ReleaseIdSchema = Type.Unsafe<ReleaseId>(idShape);
+export const SourceAssetIdSchema = Type.Unsafe<SourceAssetId>(idShape);
+export const DelegationPolicyIdSchema = Type.Unsafe<DelegationPolicyId>(idShape);
+export const WorkflowRunIdSchema = Type.Unsafe<WorkflowRunId>(idShape);
+export const ReviewItemIdSchema = Type.Unsafe<ReviewItemId>(idShape);
+
 // 领域字符串上限（HTTP contract 统一口径）。
 export const LIMITS = {
   displayTitle: 200,
@@ -47,8 +74,10 @@ export const LIMITS = {
   blockedReason: 4000,
 } as const;
 
-function literals(values: readonly string[]) {
-  return values.map((v) => Type.Literal(v));
+function literals<T extends readonly string[]>(
+  values: T,
+): { -readonly [K in keyof T]: TLiteral<T[K] & string> } {
+  return values.map((v) => Type.Literal(v)) as { -readonly [K in keyof T]: TLiteral<T[K] & string> };
 }
 
 export const NodeTypeSchema = Type.Union(literals(NODE_TYPES));
@@ -84,8 +113,8 @@ export const RolesSchema = Type.Array(Type.String({ minLength: 1, maxLength: LIM
 
 export const AuthorizationSchema = Type.Object(
   {
-    workflowRunId: IdSchema,
-    policyId: IdSchema,
+    workflowRunId: WorkflowRunIdSchema,
+    policyId: DelegationPolicyIdSchema,
   },
   { additionalProperties: false },
 );

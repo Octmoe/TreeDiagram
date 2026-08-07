@@ -2,7 +2,11 @@ import { Type, type Static } from '@sinclair/typebox';
 import { NODE_TYPES, RELATION_TYPES } from '../enums.js';
 import {
   EpistemicStateSchema,
-  IdSchema,
+  NodeIdSchema,
+  NodeRevisionIdSchema,
+  RelationIdSchema,
+  RelationRevisionIdSchema,
+  ReviewItemIdSchema,
   LIMITS,
   Nullable,
   ReviewVerdictSchema,
@@ -21,8 +25,8 @@ const nodeActionVariants = NODE_TYPES.map((nodeType) =>
     {
       proposalRef: proposalRefSchema,
       operation: Type.Union([Type.Literal('create'), Type.Literal('revise')]),
-      logicalNodeId: Nullable(IdSchema),
-      baseRevisionId: Nullable(IdSchema),
+      logicalNodeId: Nullable(NodeIdSchema),
+      baseRevisionId: Nullable(NodeRevisionIdSchema),
       nodeType: Type.Literal(nodeType),
       displayTitle: Type.String({ minLength: 1, maxLength: LIMITS.displayTitle }),
       contentText: Type.String({ maxLength: LIMITS.contentText }),
@@ -56,8 +60,8 @@ const relationActionVariants = RELATION_TYPES.map((relationType) =>
     {
       proposalRef: proposalRefSchema,
       operation: Type.Union([Type.Literal('create'), Type.Literal('revise')]),
-      logicalRelationId: Nullable(IdSchema),
-      baseRelationRevisionId: Nullable(IdSchema),
+      logicalRelationId: Nullable(RelationIdSchema),
+      baseRelationRevisionId: Nullable(RelationRevisionIdSchema),
       relationType: Type.Literal(relationType),
       from: endpointRefSchema,
       to: endpointRefSchema,
@@ -117,7 +121,7 @@ export type DesignProposal = Static<typeof DesignProposalSchema>;
 
 export const ReevaluationItemResultSchema = Type.Object(
   {
-    reviewItemId: IdSchema,
+    reviewItemId: ReviewItemIdSchema,
     verdict: ReviewVerdictSchema,
     rationale: Type.String({ minLength: 1, maxLength: LIMITS.rationale }),
     replacementProposalRef: Nullable(proposalRefSchema),

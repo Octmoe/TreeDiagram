@@ -8,8 +8,13 @@ import {
   DecisionImportanceSchema,
   EpistemicStateSchema,
   EvidenceKindSchema,
+  ChangeSetIdSchema,
   IdSchema,
   IsoTimestampSchema,
+  NodeIdSchema,
+  NodeRevisionIdSchema,
+  ProjectIdSchema,
+  SourceAssetIdSchema,
   LIMITS,
   NodeTypeSchema,
   Nullable,
@@ -50,7 +55,7 @@ export const DecisionAttributesSchema = Type.Object(
 export const EvidenceAttributesSchema = Type.Object(
   {
     evidenceKind: EvidenceKindSchema,
-    sourceAssetId: Nullable(IdSchema),
+    sourceAssetId: Nullable(SourceAssetIdSchema),
     method: Type.String({ maxLength: LIMITS.rationale }),
     premises: Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.rationale }), {
       maxItems: 50,
@@ -124,8 +129,8 @@ export function checkNodeAttributes(nodeType: NodeType, attributes: unknown): bo
 
 export const NodeSchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
+    id: NodeIdSchema,
+    projectId: ProjectIdSchema,
     nodeType: NodeTypeSchema,
     authorKind: AuthorKindSchema,
     authorRef: Nullable(Type.String({ maxLength: LIMITS.authorRef })),
@@ -137,9 +142,9 @@ export type Node = Static<typeof NodeSchema>;
 
 export const NodeRevisionSchema = Type.Object(
   {
-    id: IdSchema,
-    nodeId: IdSchema,
-    createdInChangeSetId: IdSchema,
+    id: NodeRevisionIdSchema,
+    nodeId: NodeIdSchema,
+    createdInChangeSetId: ChangeSetIdSchema,
     revisionNumber: Type.Integer({ minimum: 1 }),
     displayTitle: Type.String({ minLength: 1, maxLength: LIMITS.displayTitle }),
     contentText: Type.String({ maxLength: LIMITS.contentText }),
@@ -148,7 +153,7 @@ export const NodeRevisionSchema = Type.Object(
     approvalState: ApprovalStateSchema,
     epistemicState: Nullable(EpistemicStateSchema),
     authorization: Nullable(AuthorizationSchema),
-    supersedesRevisionId: Nullable(IdSchema),
+    supersedesRevisionId: Nullable(NodeRevisionIdSchema),
     authorKind: AuthorKindSchema,
     authorRef: Nullable(Type.String({ maxLength: LIMITS.authorRef })),
     createdAt: IsoTimestampSchema,

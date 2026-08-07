@@ -4,18 +4,22 @@ import {
   EventTypeSchema,
   IdSchema,
   IsoTimestampSchema,
+  NodeRevisionIdSchema,
+  ProjectIdSchema,
+  RelationRevisionIdSchema,
+  ReleaseIdSchema,
   LIMITS,
   Nullable,
 } from './common.js';
 
 export const ReleaseSchema = Type.Object(
   {
-    id: IdSchema,
-    projectId: IdSchema,
+    id: ReleaseIdSchema,
+    projectId: ProjectIdSchema,
     version: Type.Integer({ minimum: 1 }),
-    rootRevisionIds: Type.Array(IdSchema),
-    nodeRevisionIds: Type.Array(IdSchema),
-    relationRevisionIds: Type.Array(IdSchema),
+    rootRevisionIds: Type.Array(NodeRevisionIdSchema),
+    nodeRevisionIds: Type.Array(NodeRevisionIdSchema),
+    relationRevisionIds: Type.Array(RelationRevisionIdSchema),
     summary: Type.String({ maxLength: LIMITS.summary }),
     authorKind: AuthorKindSchema,
     authorRef: Nullable(Type.String({ maxLength: LIMITS.authorRef })),
@@ -28,7 +32,7 @@ export type Release = Static<typeof ReleaseSchema>;
 export const EventSchema = Type.Object(
   {
     cursor: Type.Integer({ minimum: 1 }),
-    projectId: IdSchema,
+    projectId: ProjectIdSchema,
     eventType: EventTypeSchema,
     payload: Type.Record(Type.String(), Type.Unknown()),
     createdAt: IsoTimestampSchema,
