@@ -1,0 +1,125 @@
+import { TypeCompiler } from '@sinclair/typebox/compiler';
+import type {
+  ModelProvider,
+  StructuredGenerationRequest,
+  StructuredGenerationResult,
+} from './model-provider.js';
+import { modelError } from './model-provider.js';
+
+/**
+ * FakeModelProvider：确定性、无网络。两种用法：
+ * 1. script：测试按调用次序编排返回值（或抛错），验证工作流状态机/断点恢复；
+ * 2. 默认 handler：开发/e2e 环境生成最小合法输出（M3 起 UI 可端到端走通 Agent 路径）。
+ */
+
+export type FakeResponder = (
+  request: StructuredGenerationRequest,
+  callIndex: number,
+) => unknown | Promise<unknown>;
+
+export interface FakeCall {
+  outputSchemaName: string;
+  instructions: string;
+  input: string;
+  model: string;
+  reasoningEffort: string;
+}
+
+export class FakeModelProvider implements ModelProvider {
+  readonly providerName = 'fake';
+  readonly calls: FakeCall[] = [];
+  private responder: FakeResponder;
+
+  constructor(responder: FakeResponder) {
+    this.responder = responder;
+  }
+
+  /** 测试编排：依次返回 values；耗尽后抛 MODEL_PROVIDER_FAILED。 */
+  static scripted(values: Array<unknown>): FakeModelProvider {
+    return new FakeModelProvider((_req, i) => {
+      if (i >= values.length) {
+        throw modelError('MODEL_PROVIDER_FAILED', 'fake script 已耗尽', { retryable: false });
+      }
+      const v = values[i];
+      if (v instanceof Error) throw v;
+      return v;
+    });
+  }
+
+  /** 默认开发响应：按 outputSchemaName 生成最小合法结构。 */
+  static forDevelopment(): FakeModelProvider {
+    return new FakeModelProvider((req) => defaultFakeValue(req.outputSchemaName, req.input));
+  }
+
+  async generateStructured<T>(
+    request: StructuredGenerationRequest,
+  ): Promise<StructuredGenerationResult<T>> {
+    if (request.signal?.aborted) {
+      throw modelError('MODEL_PROVIDER_FAILED', '工作流已取消', {
+        retryable: false,
+        cancelled: true,
+      });
+    }
+    const callIndex = this.calls.length;
+    this.calls.push({
+      outputSchemaName: request.outputSchemaName,
+      instructions: request.instructions,
+      input: request.input,
+      model: request.model,
+      reasoningEffort: request.reasoningEffort,
+    });
+    const value = await this.responder(request, callIndex);
+    const checker = TypeCompiler.Compile(request.outputSchema);
+    if (!checker.Check(value)) {
+      const first = [...checker.Errors(value)][0];
+      throw modelError('MODEL_OUTPUT_INVALID', 'fake 输出未通过 schema 校验', {
+        path: first?.path,
+        message: first?.message,
+      });
+    }
+    return {
+      value: value as T,
+      providerResponseId: `fake-${callIndex}`,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    };
+  }
+}
+
+function defaultFakeValue(schemaName: string, input: string): unknown {
+  if (schemaName === 'DesignProposal') {
+    const workflowType = input.includes('"derive"') ? 'derive' : 'initialize';
+    return {
+      schemaVersion: 1,
+      workflowType,
+      summary: 'fake provider 生成的最小提案',
+      nodeActions: [
+        {
+          proposalRef: 'n1',
+          operation: 'create',
+          logicalNodeId: null,
+          baseRevisionId: null,
+          nodeType: 'claim',
+          displayTitle: 'fake 候选命题',
+          contentText: '由 FakeModelProvider 生成，用于离线开发。',
+          roles: [],
+          attributes: {},
+          approvalSuggestion: 'tentative',
+          epistemicState: 'assumed',
+          rationale: 'fake provider 占位提案',
+        },
+      ],
+      relationActions: [],
+      questionsForUser: [],
+      warnings: ['当前使用 FakeModelProvider，输出不具设计价值'],
+      stopReason: 'completed',
+    };
+  }
+  if (schemaName === 'ReevaluationBatchResult') {
+    throw modelError('MODEL_PROVIDER_FAILED', 'Reevaluation 默认 fake 响应在 M5 提供', {
+      retryable: false,
+    });
+  }
+  throw modelError('MODEL_PROVIDER_FAILED', `未知 fake schema: ${schemaName}`, {
+    retryable: false,
+  });
+}

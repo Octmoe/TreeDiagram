@@ -3,5 +3,9 @@ export { buildServer, createApp } from './app.js';
 export type { AppInstance } from './types.js';
 export type { ServerContext } from './context.js';
 export { loadServerConfig, type ServerConfig } from './config.js';
-export { unconfiguredWorkflowRunner, type WorkflowRunner } from './workflow-runner.js';
+export {
+  createWorkflowRunner,
+  unconfiguredWorkflowRunner,
+  type WorkflowRunner,
+} from './workflow-runner.js';
 export { VERSION } from './version.js';

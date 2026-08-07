@@ -198,9 +198,10 @@ export class WorkflowRunRepository {
   }
 
   hasActiveRun(projectId: ProjectId): boolean {
+    // waiting_user 是暂停等待用户的活跃态（API_CONTRACT：running/paused 时 409）。
     const row = this.db
       .prepare(
-        "SELECT 1 AS x FROM workflow_run WHERE project_id = ? AND status IN ('queued','running') LIMIT 1",
+        "SELECT 1 AS x FROM workflow_run WHERE project_id = ? AND status IN ('queued','running','waiting_user') LIMIT 1",
       )
       .get(projectId);
     return row !== undefined;

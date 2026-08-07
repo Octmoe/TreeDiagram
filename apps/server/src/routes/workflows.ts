@@ -90,16 +90,7 @@ export function registerWorkflowRoutes(app: AppInstance, ctx: ServerContext): vo
       if (!run || run.projectId !== project.id) {
         throw new DomainError('NOT_FOUND', 'WorkflowRun 不存在', { id: request.params.id });
       }
-      if (run.status !== 'queued' && run.status !== 'running' && run.status !== 'waiting_user') {
-        throw new DomainError('INVALID_STATE_TRANSITION', `状态 ${run.status} 不可取消`, {
-          status: run.status,
-        });
-      }
-      const now = ctx.clock.now();
-      ctx.db.repos.workflowRun.update(run.id, { status: 'cancelled', finishedAt: now }, now);
-      const updated = ctx.db.repos.workflowRun.getById(run.id);
-      if (!updated) throw new DomainError('CORRUPT_PERSISTED_DATA', 'WorkflowRun 更新后缺失');
-      return updated;
+      return ctx.workflowRunner.cancel(project, run.id);
     },
   );
 

@@ -8,12 +8,20 @@ export interface ServerConfig {
   port: number;
   maxSourceBytes: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /** Agent 工作流模型配置（§15.1）。 */
+  model: string;
+  modelTimeoutMs: number;
+  /** 开发用 fake provider 开关；非空时忽略 OPENAI_API_KEY。 */
+  modelProvider: 'fake' | null;
 }
 
 export const DEFAULT_PORT = 4317;
 export const DEFAULT_MAX_SOURCE_BYTES = 2 * 1024 * 1024; // 2 MiB
 /** 请求体上限：source 上传体 + JSON 包装开销；其余接口远小于此（§7 实现约束）。 */
 export const BODY_LIMIT_OVERHEAD_BYTES = 64 * 1024;
+export const DEFAULT_MODEL = 'gpt-5.6-terra';
+export const DEFAULT_MODEL_TIMEOUT_MS = 300_000;
+const MODEL_TIMEOUT_RANGE = { min: 10_000, max: 900_000 } as const;
 
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
@@ -39,6 +47,27 @@ function parseMaxSourceBytes(raw: string | undefined): number {
     );
   }
   return value;
+}
+
+function parseModelTimeoutMs(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return DEFAULT_MODEL_TIMEOUT_MS;
+  const value = Number.parseInt(raw, 10);
+  if (
+    !Number.isInteger(value) ||
+    value < MODEL_TIMEOUT_RANGE.min ||
+    value > MODEL_TIMEOUT_RANGE.max
+  ) {
+    fail(
+      `TREEDIAGRAM_MODEL_TIMEOUT_MS 非法（允许 ${MODEL_TIMEOUT_RANGE.min}–${MODEL_TIMEOUT_RANGE.max}）: ${raw}`,
+    );
+  }
+  return value;
+}
+
+function parseModelProvider(raw: string | undefined): 'fake' | null {
+  if (raw === undefined || raw === '') return null;
+  if (raw === 'fake') return 'fake';
+  fail(`TREEDIAGRAM_MODEL_PROVIDER 非法（仅支持 fake 或不设置）: ${raw}`);
 }
 
 function workspaceFromArgv(argv: string[]): string | null {
@@ -67,5 +96,8 @@ export function loadServerConfig(
     port: parsePort(env['TREEDIAGRAM_PORT']),
     maxSourceBytes: parseMaxSourceBytes(env['TREEDIAGRAM_MAX_SOURCE_BYTES']),
     logLevel,
+    model: env['TREEDIAGRAM_MODEL']?.trim() || DEFAULT_MODEL,
+    modelTimeoutMs: parseModelTimeoutMs(env['TREEDIAGRAM_MODEL_TIMEOUT_MS']),
+    modelProvider: parseModelProvider(env['TREEDIAGRAM_MODEL_PROVIDER']),
   };
 }

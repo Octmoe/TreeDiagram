@@ -39,6 +39,9 @@ describe('M2 HTTP API', () => {
         port: 0,
         maxSourceBytes: 2 * 1024 * 1024,
         logLevel: 'error',
+        model: 'test-model',
+        modelTimeoutMs: 300_000,
+        modelProvider: null,
       },
       workflowRunner: unconfiguredWorkflowRunner,
     });

@@ -4,26 +4,41 @@ import { buildServer } from './app.js';
 import { loadServerConfig } from './config.js';
 import type { ServerContext } from './context.js';
 import { defaultWebDistDir } from './static.js';
-import { unconfiguredWorkflowRunner } from './workflow-runner.js';
+import { createWorkflowRunner } from './workflow-runner.js';
 
 /**
  * 服务入口：打开工作区 → 组装服务 → 仅监听 127.0.0.1（§19）。
- * 启动日志打印 workspace path / port / project state；绝不打印 token（§15.1）。
+ * 启动日志打印 workspace path / port / project state / provider；绝不打印 token 或 API key（§15.1）。
  */
 async function main(): Promise<void> {
   const config = loadServerConfig();
   const clock = systemClock;
   const workspace = new WorkspaceService(clock).openWorkspace(config.workspaceDir);
 
+  const { runner, core, providerName } = createWorkflowRunner(
+    workspace.db,
+    clock,
+    config,
+    workspace.meta.workspaceId,
+  );
+
   const ctx: ServerContext = {
     db: workspace.db,
     clock,
     config,
-    workflowRunner: unconfiguredWorkflowRunner,
+    workflowRunner: runner,
   };
   const app = buildServer(ctx);
 
   const project = workspace.db.repos.project.requireSingleton();
+  // 重启恢复：上次进程遗留的 queued/running run 标记为 failed(PROCESS_INTERRUPTED)（§4.6）。
+  if (core) {
+    const recovered = core.recoverInterrupted(project);
+    if (recovered > 0) {
+      app.log.info({ recovered }, '已将中断的 WorkflowRun 标记为 failed(PROCESS_INTERRUPTED)');
+    }
+  }
+
   app.log.info(
     {
       workspace: workspace.dir,
@@ -31,6 +46,8 @@ async function main(): Promise<void> {
       projectStatus: project.status,
       schemaVersion: workspace.meta.schemaVersion,
       staticUi: existsSync(defaultWebDistDir()),
+      modelProvider: providerName ?? 'unconfigured',
+      model: providerName ? config.model : null,
     },
     'TreeDiagram server 启动',
   );
