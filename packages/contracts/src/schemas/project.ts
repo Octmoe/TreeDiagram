@@ -57,10 +57,14 @@ export const SourceAssetMetaSchema = Type.Object(
 );
 export type SourceAssetMeta = Static<typeof SourceAssetMetaSchema>;
 
-export const SourceAssetSchema = Type.Intersect([
-  SourceAssetMetaSchema,
-  Type.Object({ contentText: Type.String() }),
-]);
+// 注意：不能用 Type.Intersect——成员带 additionalProperties:false 时会拒绝合并后的字段。
+export const SourceAssetSchema = Type.Object(
+  {
+    ...SourceAssetMetaSchema.properties,
+    contentText: Type.String(),
+  },
+  { additionalProperties: false },
+);
 export type SourceAsset = Static<typeof SourceAssetSchema>;
 
 export const CreateSourceRequestSchema = Type.Object(

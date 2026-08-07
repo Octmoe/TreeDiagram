@@ -233,14 +233,14 @@ describe('M1 seeded fixture: Release 1 -> candidate -> Release 2', () => {
     expect(eventsAfterAdopt.some((e) => e.eventType === 'design.invalidated')).toBe(true);
     expect(eventsAfterAdopt.some((e) => e.eventType === 'reevaluation.started')).toBe(true);
 
-    // 全部复核 valid → ready → publish Release 2
+    // 全部复核 valid → ChangeSet 自动 ready（§4 状态表）→ publish Release 2
     const { items } = ws.services.changeSets.reviewItems((changeSet as { id: string }).id);
     for (const item of items) {
       if (item.status === 'pending') {
         ws.services.changeSets.resolveReviewItem(item.id, 'valid', '复核通过', userAuthor);
       }
     }
-    ws.services.changeSets.markReady((changeSet as { id: string }).id);
+    expect(ws.services.changeSets.require((changeSet as { id: string }).id).status).toBe('ready');
     const release2 = ws.services.releases.publish(
       freshProject(ws),
       (changeSet as { id: string }).id,

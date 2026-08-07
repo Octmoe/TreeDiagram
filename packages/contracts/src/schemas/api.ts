@@ -48,8 +48,8 @@ export const ViewModeSchema = Type.Union([Type.Literal('release'), Type.Literal(
 export const TreeQuerySchema = Type.Object(
   {
     view: ViewModeSchema,
-    parentNodeId: Nullable(IdSchema),
-    depth: Type.Integer({ minimum: 1, maximum: 10, default: 1 }),
+    parentNodeId: Type.Optional(Nullable(IdSchema)),
+    depth: Type.Optional(Type.Integer({ minimum: 1, maximum: 10, default: 1 })),
   },
   { additionalProperties: false },
 );
@@ -68,13 +68,13 @@ export type TreeResponse = Static<typeof TreeResponseSchema>;
 export const QueryNodesQuerySchema = Type.Object(
   {
     view: ViewModeSchema,
-    type: Nullable(NodeTypeSchema),
-    role: Nullable(Type.String({ minLength: 1, maxLength: LIMITS.role })),
-    approval: Nullable(ApprovalStateSchema),
-    epistemic: Nullable(EpistemicStateSchema),
-    text: Nullable(Type.String({ minLength: 1, maxLength: 500 })),
-    limit: Type.Integer({ minimum: 1, maximum: 200, default: 50 }),
-    cursor: Nullable(Type.String()),
+    type: Type.Optional(Nullable(NodeTypeSchema)),
+    role: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: LIMITS.role }))),
+    approval: Type.Optional(Nullable(ApprovalStateSchema)),
+    epistemic: Type.Optional(Nullable(EpistemicStateSchema)),
+    text: Type.Optional(Nullable(Type.String({ minLength: 1, maxLength: 500 }))),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 50 })),
+    cursor: Type.Optional(Nullable(Type.String())),
   },
   { additionalProperties: false },
 );
@@ -91,9 +91,11 @@ export type QueryNodesResponse = Static<typeof QueryNodesResponseSchema>;
 
 export const NodeRelationsQuerySchema = Type.Object(
   {
-    direction: Type.Union([Type.Literal('in'), Type.Literal('out'), Type.Literal('both')], {
-      default: 'both',
-    }),
+    direction: Type.Optional(
+      Type.Union([Type.Literal('in'), Type.Literal('out'), Type.Literal('both')], {
+        default: 'both',
+      }),
+    ),
     view: ViewModeSchema,
   },
   { additionalProperties: false },
@@ -126,8 +128,8 @@ export type NodeViewQuery = Static<typeof NodeViewQuerySchema>;
 
 export const EventsQuerySchema = Type.Object(
   {
-    after: Type.Integer({ minimum: 0, default: 0 }),
-    limit: Type.Integer({ minimum: 1, maximum: 1000, default: 100 }),
+    after: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, default: 100 })),
   },
   { additionalProperties: false },
 );

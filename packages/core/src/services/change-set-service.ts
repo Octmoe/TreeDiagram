@@ -574,6 +574,15 @@ export class ChangeSetService {
         this.db.repos.project.updateStatus(project.id, 'reevaluating', null, now);
       }
     }
+    // 全部 resolved 且 checker 通过时 ChangeSet 自动进入 ready（§4 状态表 / §13）；
+    // checker 仍有 blocking 时保持 reevaluating，等待用户修复或 abandon。
+    if (changeSet.status === 'reevaluating' && counts.pending === 0 && counts.blocked === 0) {
+      try {
+        this.markReady(changeSetId);
+      } catch (error) {
+        if (!(error instanceof DomainError && error.code === 'DESIGN_INCONSISTENT')) throw error;
+      }
+    }
     this.db.repos.event.append(
       project.id,
       'reevaluation.progress',

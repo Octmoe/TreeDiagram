@@ -112,6 +112,14 @@ export const BlockReviewItemRequestSchema = Type.Object(
 );
 export type BlockReviewItemRequest = Static<typeof BlockReviewItemRequestSchema>;
 
+export const PublishReleaseRequestSchema = Type.Object(
+  {
+    summary: Type.String({ minLength: 1, maxLength: LIMITS.summary }),
+  },
+  { additionalProperties: false },
+);
+export type PublishReleaseRequest = Static<typeof PublishReleaseRequestSchema>;
+
 export const ReviewItemsResponseSchema = Type.Object(
   {
     items: Type.Array(ReviewItemSchema),

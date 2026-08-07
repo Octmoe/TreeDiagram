@@ -52,8 +52,8 @@ export type StartWorkflowRequest = Static<typeof StartWorkflowRequestSchema>;
 
 export const WorkflowListQuerySchema = Type.Object(
   {
-    limit: Type.Integer({ minimum: 1, maximum: 200, default: 50 }),
-    cursor: Nullable(Type.String()),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 50 })),
+    cursor: Type.Optional(Nullable(Type.String())),
   },
   { additionalProperties: false },
 );

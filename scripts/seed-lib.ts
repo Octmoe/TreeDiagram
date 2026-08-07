@@ -170,7 +170,11 @@ export function applySeed(
     }
   }
 
-  changeSets.markReady(changeSet.id);
+  // 全部 resolved 且 checker 通过后 ChangeSet 自动进入 ready（§4 状态表）
+  const ready = changeSets.require(changeSet.id);
+  if (ready.status !== 'ready') {
+    throw new Error(`seed 复核完成后 ChangeSet 未自动进入 ready（当前 ${ready.status}）`);
+  }
   const release = releases.publish(
     ctx.db.repos.project.requireSingleton(),
     changeSet.id,

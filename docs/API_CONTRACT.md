@@ -203,7 +203,7 @@ schema 名称均指 `packages/contracts/src/schemas/` 中的导出。响应均�
 | POST   | `/change-set/adopt`         | admin | —                                | `ChangeSetCurrentResponseSchema` | 候选修订生效进 working view；产生 review items；可能置 project=blocked                                                       |
 | POST   | `/change-set/abandon`       | admin | —                                | `ChangeSetCurrentResponseSchema` | 放弃 live ChangeSet 全部候选                                                                                                 |
 | POST   | `/change-set/check`         | admin | —                                | `CheckConsistencyResponseSchema` | 运行一致性检查器，不落库状态迁移                                                                                             |
-| POST   | `/change-set/publish`       | admin | —                                | `ReleaseSchema` (201)            | 仅 checker 通过且 status=ready；违反 422 `DESIGN_INCONSISTENT` / 409 `INVALID_STATE_TRANSITION`；UI 不得提供隐藏参数强制发布 |
+| POST   | `/change-set/publish`       | admin | `PublishReleaseRequestSchema`    | `ReleaseSchema` (201)            | 仅 checker 通过且 status=ready；违反 422 `DESIGN_INCONSISTENT` / 409 `INVALID_STATE_TRANSITION`；UI 不得提供隐藏参数强制发布 |
 | POST   | `/review-items/:id/resolve` | admin | `ResolveReviewItemRequestSchema` | `ReviewItemSchema`               |                                                                                                                              |
 | POST   | `/review-items/:id/block`   | admin | `BlockReviewItemRequestSchema`   | `ReviewItemSchema`               |                                                                                                                              |
 
