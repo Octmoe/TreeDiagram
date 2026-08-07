@@ -295,6 +295,76 @@ describe('M2 HTTP API', () => {
     expect([...cursors].sort((a: number, b: number) => a - b)).toEqual(cursors);
   });
 
+  it('非一致状态下游读取闸门无绕过路径（§3.3 / 关键不变量 3）', async () => {
+    const auth = adminHeaders(server.adminToken);
+    const rootRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/nodes',
+      headers: auth,
+      payload: {
+        nodeType: 'claim',
+        displayTitle: '根命题',
+        contentText: '根命题正文',
+        roles: ['root'],
+        attributes: {},
+        approvalState: 'user_confirmed',
+        epistemicState: 'assumed',
+      },
+    });
+    expect(rootRes.statusCode).toBe(201);
+    const root = rootRes.json().data;
+
+    // adopt → project 进入 reevaluating（design invalidated，等待复核）
+    const adoptRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/change-set/adopt',
+      headers: auth,
+    });
+    expect(adoptRes.statusCode).toBe(200);
+
+    const consumer = adminHeaders(server.consumerToken);
+    // consumer 的 release 视图读取全部被 423 锁定
+    for (const url of [
+      '/api/v1/release/current',
+      '/api/v1/tree?view=release&depth=2',
+      '/api/v1/query?view=release&text=根',
+    ]) {
+      const res = await server.app.inject({ method: 'GET', url, headers: consumer });
+      expect(res.statusCode).toBe(423);
+      expect(res.json().error.code).toBe('DESIGN_NOT_CONSISTENT');
+    }
+    // 无绕过路径：working 视图 / 历史 / 关系查询对 consumer 一律 403
+    for (const url of [
+      '/api/v1/tree?view=working&depth=2',
+      `/api/v1/nodes/${root.node.id}/history`,
+      `/api/v1/nodes/${root.node.id}/relations?view=release`,
+    ]) {
+      const res = await server.app.inject({ method: 'GET', url, headers: consumer });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('FORBIDDEN');
+    }
+    // status / events 始终可读，供下游轮询等待闸门放开
+    const status = await server.app.inject({
+      method: 'GET',
+      url: '/api/v1/status',
+      headers: consumer,
+    });
+    expect(status.statusCode).toBe(200);
+    const events = await server.app.inject({
+      method: 'GET',
+      url: '/api/v1/events?after=0&limit=10',
+      headers: consumer,
+    });
+    expect(events.statusCode).toBe(200);
+    // admin 不受 423 闸门影响
+    const adminRelease = await server.app.inject({
+      method: 'GET',
+      url: '/api/v1/release/current',
+      headers: auth,
+    });
+    expect(adminRelease.statusCode).toBe(200);
+  });
+
   it('未配置模型时启动工作流 → 422 MODEL_NOT_CONFIGURED；取消不存在的 run → 404', async () => {
     const auth = adminHeaders(server.adminToken);
     const startRes = await server.app.inject({

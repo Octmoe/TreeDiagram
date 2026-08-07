@@ -1,12 +1,15 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   ChangeSetService,
+  CoreWorkflowRunner,
   DatabaseContext,
   DomainError,
+  FakeModelProvider,
   NodeService,
   QueryService,
   RelationService,
@@ -18,7 +21,14 @@ import {
   userAuthor,
   type ProjectRecord,
 } from '@treediagram/core';
-import type { ChangeSetId, NodeId, NodeRevisionId, RelationId } from '@treediagram/contracts';
+import type {
+  ChangeSetId,
+  NodeId,
+  NodeRevisionId,
+  RelationId,
+  WorkflowRun,
+} from '@treediagram/contracts';
+import { asId } from '@treediagram/contracts';
 import { applySeed, loadSeed } from '../../scripts/seed-lib.js';
 import { freshProject, makeTestWorkspace, quickNode } from '../helpers/workspace.js';
 
@@ -137,6 +147,125 @@ describe('M1 工作区重开恢复', () => {
       const heads = second.db.repos.changeSet.listNodeHeads(changeSetId as string);
       expect(heads.length).toBe(1);
       expect(heads[0]?.nodeRevisionId).toBe(detail.revision.id);
+    } finally {
+      second.db.close();
+    }
+  });
+
+  it('reopen 后未完成 WorkflowRun 恢复：PROCESS_INTERRUPTED 标记 + resume 完成（§16.1）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'treediagram-m1-'));
+    tmpDirs.push(dir);
+    const workspaceService = new WorkspaceService(systemClock);
+    workspaceService.initWorkspace(dir, 'reopen-run-test');
+
+    // 第一段进程：建立候选与遗留 running run（模拟进程中断）
+    const first = workspaceService.openWorkspace(dir);
+    const firstCtx = { db: first.db, clock: systemClock };
+    const project = first.db.repos.project.requireSingleton();
+    const target = new NodeService(firstCtx).createCandidateNode(
+      project,
+      'claim',
+      {
+        displayTitle: '恢复目标节点',
+        contentText: 'candidate',
+        roles: [],
+        attributes: {},
+        approvalState: 'draft',
+        epistemicState: null,
+      },
+      userAuthor,
+    );
+    first.db.repos.project.updateStatus(project.id, 'consistent', null, systemClock.now());
+    const now = systemClock.now();
+    const interrupted: WorkflowRun = {
+      id: asId(randomUUID()),
+      projectId: project.id,
+      changeSetId: null,
+      workflowType: 'derive',
+      targetNodeId: target.node.id,
+      status: 'running',
+      currentStep: 'running/generate',
+      input: {
+        workflowType: 'derive',
+        targetNodeId: target.node.id,
+        changeSetId: null,
+        sourceAssetIds: [],
+        focusInstruction: null,
+      },
+      checkpoint: {
+        steps: ['load_context'],
+        contextHash: null,
+        proposal: null,
+        proposals: [],
+        providerResponseId: null,
+        usage: null,
+        applied: null,
+      },
+      summary: null,
+      error: null,
+      provider: 'fake',
+      model: 'test-model',
+      providerResponseId: null,
+      usage: null,
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    };
+    first.db.repos.workflowRun.insert(interrupted);
+    first.db.close();
+
+    // 第二段进程（重启）：恢复遗留 run 并 resume 完成
+    const second = workspaceService.openWorkspace(dir);
+    try {
+      const secondCtx = { db: second.db, clock: systemClock };
+      const project2 = second.db.repos.project.requireSingleton();
+      const provider = FakeModelProvider.scripted([
+        {
+          schemaVersion: 1,
+          workflowType: 'derive',
+          summary: '恢复后生成',
+          nodeActions: [
+            {
+              proposalRef: 'c1',
+              operation: 'create',
+              logicalNodeId: null,
+              baseRevisionId: null,
+              nodeType: 'claim',
+              displayTitle: '恢复子节点',
+              contentText: 'resume 后写入',
+              roles: [],
+              attributes: {},
+              approvalSuggestion: 'tentative',
+              epistemicState: null,
+              rationale: '测试 rationale',
+            },
+          ],
+          relationActions: [],
+          questionsForUser: [],
+          warnings: [],
+          stopReason: 'completed',
+        },
+      ]);
+      const runner = new CoreWorkflowRunner(secondCtx, {
+        provider,
+        model: 'test-model',
+        safetyIdentifier: 'f'.repeat(32),
+      });
+      expect(runner.recoverInterrupted(project2)).toBe(1);
+      const recovered = second.db.repos.workflowRun.getById(interrupted.id);
+      expect(recovered?.status).toBe('failed');
+      expect(recovered?.error?.code).toBe('PROCESS_INTERRUPTED');
+
+      runner.resume(project2, interrupted.id);
+      const final = await runner.waitForCompletion(interrupted.id);
+      expect(final.status).toBe('succeeded');
+      expect(provider.calls).toHaveLength(1);
+      // 恢复不依赖供应商会话：本地 checkpoint + 持久化候选共同驱动（关键不变量 12）
+      const live = second.db.repos.changeSet.getLiveByProject(project2.id);
+      expect(live?.status).toBe('open');
+      const heads = second.db.repos.changeSet.listNodeHeads(live!.id as string);
+      expect(heads.length).toBe(2);
     } finally {
       second.db.close();
     }
