@@ -51,7 +51,7 @@ export const EventsResponseSchema = Type.Object(
 export type EventsResponse = Static<typeof EventsResponseSchema>;
 
 export const ReleaseCurrentResponseSchema = Type.Object(
-  { release: ReleaseSchema },
+  { release: Nullable(ReleaseSchema) },
   { additionalProperties: false },
 );
 export type ReleaseCurrentResponse = Static<typeof ReleaseCurrentResponseSchema>;
