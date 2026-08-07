@@ -13,10 +13,7 @@ import { DomainError } from '../errors.js';
 import { newId } from '../ids.js';
 import type { ServiceContext, Author } from './types.js';
 import type { ProjectRecord } from '../db/repositories/project.js';
-import {
-  assertChangeSetTransition,
-  nextProjectState,
-} from '../domain/state-rules.js';
+import { assertChangeSetTransition, nextProjectState } from '../domain/state-rules.js';
 import { buildWorkingSet, type WorkingSet } from '../domain/working-set.js';
 import { analyzeImpact, impactEscapesScope, type ImpactResult } from '../domain/impact-analyzer.js';
 import { checkConsistency } from '../domain/consistency-checker.js';
@@ -102,8 +99,18 @@ export class ChangeSetService {
     }
     const nodeHeads = this.db.repos.changeSet.listNodeHeads(changeSet.id);
     const relationHeads = this.db.repos.changeSet.listRelationHeads(changeSet.id);
-    const base = buildWorkingSet({ baseRelease, nodeHeads: [], relationHeads: [], repos: this.db.repos });
-    const working = buildWorkingSet({ baseRelease, nodeHeads, relationHeads, repos: this.db.repos });
+    const base = buildWorkingSet({
+      baseRelease,
+      nodeHeads: [],
+      relationHeads: [],
+      repos: this.db.repos,
+    });
+    const working = buildWorkingSet({
+      baseRelease,
+      nodeHeads,
+      relationHeads,
+      repos: this.db.repos,
+    });
     return { baseRelease, base, working, nodeHeads, relationHeads };
   }
 
@@ -112,7 +119,12 @@ export class ChangeSetService {
     const release = project.currentReleaseId
       ? this.db.repos.release.getById(project.currentReleaseId)
       : null;
-    return buildWorkingSet({ baseRelease: release, nodeHeads: [], relationHeads: [], repos: this.db.repos });
+    return buildWorkingSet({
+      baseRelease: release,
+      nodeHeads: [],
+      relationHeads: [],
+      repos: this.db.repos,
+    });
   }
 
   private detectRootChange(changeSet: ChangeSet): boolean {
@@ -161,19 +173,35 @@ export class ChangeSetService {
   }
 
   /** 为受影响实体建立 review items（幂等：唯一行复用并重置为 pending）。 */
-  private ensureReviewItems(changeSet: ChangeSet, impact: ImpactResult, working: WorkingSet): number {
+  private ensureReviewItems(
+    changeSet: ChangeSet,
+    impact: ImpactResult,
+    working: WorkingSet,
+  ): number {
     const now = this.clock.now();
     let created = 0;
     for (const nodeId of impact.affectedNodeIds) {
       const revision = working.nodeRevisionByNodeId.get(nodeId);
       if (!revision) continue; // removed 节点无活动修订
-      this.db.repos.reviewItem.ensurePending(changeSet.id, 'node_revision', revision.id, REVIEW_REASON_IMPACT, now);
+      this.db.repos.reviewItem.ensurePending(
+        changeSet.id,
+        'node_revision',
+        revision.id,
+        REVIEW_REASON_IMPACT,
+        now,
+      );
       created += 1;
     }
     for (const relationId of impact.affectedRelationIds) {
       const revision = working.relationRevisionByRelationId.get(relationId);
       if (!revision) continue;
-      this.db.repos.reviewItem.ensurePending(changeSet.id, 'relation_revision', revision.id, REVIEW_REASON_IMPACT, now);
+      this.db.repos.reviewItem.ensurePending(
+        changeSet.id,
+        'relation_revision',
+        revision.id,
+        REVIEW_REASON_IMPACT,
+        now,
+      );
       created += 1;
     }
     return created;
@@ -214,7 +242,10 @@ export class ChangeSetService {
         this.db.repos.event.append(
           current.id,
           'reevaluation.blocked',
-          { changeSetId: changeSet.id, issues: blocking.map((i) => ({ code: i.code, entityRevisionId: i.entityRevisionId })) },
+          {
+            changeSetId: changeSet.id,
+            issues: blocking.map((i) => ({ code: i.code, entityRevisionId: i.entityRevisionId })),
+          },
           now,
         );
       }
@@ -233,15 +264,23 @@ export class ChangeSetService {
         });
       }
       if (project.status !== 'initializing' && project.status !== 'consistent') {
-        throw new DomainError('INVALID_STATE_TRANSITION', `project 状态 ${project.status} 不允许 adopt`, {
-          status: project.status,
-        });
+        throw new DomainError(
+          'INVALID_STATE_TRANSITION',
+          `project 状态 ${project.status} 不允许 adopt`,
+          {
+            status: project.status,
+          },
+        );
       }
       if (changeSet.baseReleaseId !== project.currentReleaseId) {
-        throw new DomainError('STALE_BASE_REVISION', 'ChangeSet 的 base Release 与当前 Release 不一致', {
-          changeSetBase: changeSet.baseReleaseId,
-          currentReleaseId: project.currentReleaseId,
-        });
+        throw new DomainError(
+          'STALE_BASE_REVISION',
+          'ChangeSet 的 base Release 与当前 Release 不一致',
+          {
+            changeSetBase: changeSet.baseReleaseId,
+            currentReleaseId: project.currentReleaseId,
+          },
+        );
       }
 
       const { baseRelease, base, working, nodeHeads, relationHeads } = this.buildViews(changeSet);
@@ -296,7 +335,11 @@ export class ChangeSetService {
       this.db.repos.event.append(
         project.id,
         'reevaluation.started',
-        { changeSetId: changeSet.id, reviewItemCount: reviewItemsCreated, rootChange: impact.rootChange },
+        {
+          changeSetId: changeSet.id,
+          reviewItemCount: reviewItemsCreated,
+          rootChange: impact.rootChange,
+        },
         now,
       );
 
@@ -330,7 +373,11 @@ export class ChangeSetService {
           this.db.repos.event.append(
             project.id,
             'design.restored',
-            { releaseId: changeSet.baseReleaseId, version: base?.version ?? null, abandonedChangeSetId: changeSet.id },
+            {
+              releaseId: changeSet.baseReleaseId,
+              version: base?.version ?? null,
+              abandonedChangeSetId: changeSet.id,
+            },
             now,
           );
         } else {
@@ -343,13 +390,21 @@ export class ChangeSetService {
   }
 
   /** 一致性预览：对当前工作版本运行 checker。 */
-  check(changeSetId: string): { issues: ConsistencyIssue[]; blockingCount: number; warningCount: number } {
+  check(changeSetId: string): {
+    issues: ConsistencyIssue[];
+    blockingCount: number;
+    warningCount: number;
+  } {
     const project = this.db.repos.project.requireSingleton();
     const changeSet = this.require(changeSetId);
     const { working } = this.buildViews(changeSet);
     const counts = this.db.repos.reviewItem.countsByChangeSet(changeSet.id);
     const policies = this.db.repos.delegation.listActiveByProject(project.id);
-    const issues = checkConsistency({ workingSet: working, reviewCounts: { pending: counts.pending, blocked: counts.blocked }, policies });
+    const issues = checkConsistency({
+      workingSet: working,
+      reviewCounts: { pending: counts.pending, blocked: counts.blocked },
+      policies,
+    });
     return {
       issues,
       blockingCount: issues.filter((i) => i.severity === 'blocking').length,
@@ -408,7 +463,12 @@ export class ChangeSetService {
 
   // ---- ReviewItem 操作 ----
 
-  resolveReviewItem(id: string, verdict: ReviewVerdict, rationale: string, author: Author): ReviewItem {
+  resolveReviewItem(
+    id: string,
+    verdict: ReviewVerdict,
+    rationale: string,
+    author: Author,
+  ): ReviewItem {
     return this.db.transaction(() => {
       if (verdict === 'unknown') {
         throw new DomainError('VALIDATION_FAILED', 'unknown 结论请使用 block 操作');
@@ -436,9 +496,13 @@ export class ChangeSetService {
       const item = this.db.repos.reviewItem.getById(id);
       if (!item) throw new DomainError('NOT_FOUND', 'review item 不存在', { id });
       if (item.status !== 'pending') {
-        throw new DomainError('INVALID_STATE_TRANSITION', '只有 pending 的 review item 可以 block', {
-          status: item.status,
-        });
+        throw new DomainError(
+          'INVALID_STATE_TRANSITION',
+          '只有 pending 的 review item 可以 block',
+          {
+            status: item.status,
+          },
+        );
       }
       const now = this.clock.now();
       this.db.repos.reviewItem.block(
@@ -474,9 +538,13 @@ export class ChangeSetService {
       const item = this.db.repos.reviewItem.getById(id);
       if (!item) throw new DomainError('NOT_FOUND', 'review item 不存在', { id });
       if (item.status !== 'blocked') {
-        throw new DomainError('INVALID_STATE_TRANSITION', '只有 blocked 的 review item 可以解除阻塞', {
-          status: item.status,
-        });
+        throw new DomainError(
+          'INVALID_STATE_TRANSITION',
+          '只有 blocked 的 review item 可以解除阻塞',
+          {
+            status: item.status,
+          },
+        );
       }
       this.db.repos.reviewItem.unblock(id, this.clock.now());
       this.afterReviewProgress(item.changeSetId);

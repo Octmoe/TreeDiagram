@@ -46,7 +46,10 @@ export class WorkspaceService {
   constructor(private readonly clock: Clock) {}
 
   /** 初始化工作区：目录、token、workspace.json、数据库与 singleton project（§7.1）。拒绝覆盖。 */
-  initWorkspace(dir: string, displayName: string): { meta: WorkspaceMeta; adminToken: string; consumerToken: string } {
+  initWorkspace(
+    dir: string,
+    displayName: string,
+  ): { meta: WorkspaceMeta; adminToken: string; consumerToken: string } {
     const absDir = resolve(dir);
     const tdDir = join(absDir, WORKSPACE_DIR_NAME);
     if (existsSync(tdDir)) {

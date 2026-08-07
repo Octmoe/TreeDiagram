@@ -60,6 +60,14 @@ export class DatabaseContext {
     };
   }
 
+  /** 当前已应用的最高 schema 版本。 */
+  schemaVersion(): number {
+    const row = this.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as {
+      v: number | null;
+    };
+    return row.v ?? 0;
+  }
+
   /** 单事务执行；任何抛错整体回滚。 */
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn)();

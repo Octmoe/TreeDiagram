@@ -35,9 +35,13 @@ export class ReleaseService {
         });
       }
       if (project.status !== 'reevaluating') {
-        throw new DomainError('INVALID_STATE_TRANSITION', `project 状态 ${project.status} 不允许发布`, {
-          status: project.status,
-        });
+        throw new DomainError(
+          'INVALID_STATE_TRANSITION',
+          `project 状态 ${project.status} 不允许发布`,
+          {
+            status: project.status,
+          },
+        );
       }
       if (summary.trim().length === 0) {
         throw new DomainError('VALIDATION_FAILED', '发布摘要不能为空');
@@ -61,7 +65,11 @@ export class ReleaseService {
       const blocking = issues.filter((i) => i.severity === 'blocking');
       if (blocking.length > 0) {
         throw new DomainError('DESIGN_INCONSISTENT', '一致性闸门未通过，禁止发布', {
-          blocking: blocking.map((i) => ({ code: i.code, entityRevisionId: i.entityRevisionId, message: i.message })),
+          blocking: blocking.map((i) => ({
+            code: i.code,
+            entityRevisionId: i.entityRevisionId,
+            message: i.message,
+          })),
         });
       }
 

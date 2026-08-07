@@ -1,5 +1,11 @@
 import type { Database as SqliteDatabase } from 'better-sqlite3';
-import type { AuthorKind, ProjectId, SourceAsset, SourceAssetMeta, SourceKind } from '@treediagram/contracts';
+import type {
+  AuthorKind,
+  ProjectId,
+  SourceAsset,
+  SourceAssetMeta,
+  SourceKind,
+} from '@treediagram/contracts';
 import { asId } from '@treediagram/contracts';
 import { optionalRow } from '../row-mappers.js';
 

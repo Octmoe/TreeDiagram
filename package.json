@@ -15,7 +15,7 @@
     "dev:web": "npm run dev -w @treediagram/web",
     "build:packages": "tsc -b",
     "build": "tsc -b && npm run build -w @treediagram/web",
-    "typecheck": "tsc -b && tsc -p apps/web/tsconfig.json && tsc -p scripts/tsconfig.json",
+    "typecheck": "tsc -b && tsc -p apps/web/tsconfig.json && tsc -p scripts/tsconfig.json && tsc -p tests/tsconfig.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

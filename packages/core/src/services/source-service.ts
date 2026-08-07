@@ -1,10 +1,5 @@
 import { createHash } from 'node:crypto';
-import type {
-  ProjectId,
-  SourceAsset,
-  SourceAssetMeta,
-  SourceKind,
-} from '@treediagram/contracts';
+import type { ProjectId, SourceAsset, SourceAssetMeta, SourceKind } from '@treediagram/contracts';
 import type { Clock } from '../clock.js';
 import { DomainError } from '../errors.js';
 import type { DatabaseContext } from '../db/database.js';

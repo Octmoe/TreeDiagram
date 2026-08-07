@@ -21,8 +21,7 @@ export function validateRelationEndpointTypes(
       return null;
     }
     case 'contradicts': {
-      if (fromType === 'topic' || toType === 'topic')
-        return 'contradicts 的两端都不能是 topic';
+      if (fromType === 'topic' || toType === 'topic') return 'contradicts 的两端都不能是 topic';
       return null;
     }
     case 'constrains': {

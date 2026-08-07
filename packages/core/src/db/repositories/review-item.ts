@@ -107,7 +107,9 @@ export class ReviewItemRepository {
 
   countsByChangeSet(changeSetId: string): { pending: number; blocked: number; resolved: number } {
     const rows = this.db
-      .prepare('SELECT status, COUNT(*) AS c FROM review_item WHERE change_set_id = ? GROUP BY status')
+      .prepare(
+        'SELECT status, COUNT(*) AS c FROM review_item WHERE change_set_id = ? GROUP BY status',
+      )
       .all(changeSetId) as Array<{ status: string; c: number }>;
     const counts = { pending: 0, blocked: 0, resolved: 0 };
     for (const row of rows) {
@@ -120,13 +122,17 @@ export class ReviewItemRepository {
 
   resolve(id: string, resolution: Record<string, unknown>, updatedAt: string): void {
     this.db
-      .prepare("UPDATE review_item SET status = 'resolved', resolution_json = ?, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE review_item SET status = 'resolved', resolution_json = ?, updated_at = ? WHERE id = ?",
+      )
       .run(JSON.stringify(resolution), updatedAt, id);
   }
 
   block(id: string, resolution: Record<string, unknown>, updatedAt: string): void {
     this.db
-      .prepare("UPDATE review_item SET status = 'blocked', resolution_json = ?, updated_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE review_item SET status = 'blocked', resolution_json = ?, updated_at = ? WHERE id = ?",
+      )
       .run(JSON.stringify(resolution), updatedAt, id);
   }
 

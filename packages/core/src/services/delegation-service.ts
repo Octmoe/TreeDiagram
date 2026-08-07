@@ -1,4 +1,8 @@
-import type { DelegationMode, DelegationPolicy, DelegationResolution } from '@treediagram/contracts';
+import type {
+  DelegationMode,
+  DelegationPolicy,
+  DelegationResolution,
+} from '@treediagram/contracts';
 import type { DelegationPolicyId, NodeId } from '@treediagram/contracts';
 import { DomainError } from '../errors.js';
 import { newId } from '../ids.js';
@@ -40,7 +44,12 @@ export class DelegationService {
   }
 
   /** 设置显式策略：撤销同 scope 现有活动策略后插入新策略（同一事务）。 */
-  setPolicy(project: ProjectRecord, nodeId: string, mode: DelegationMode, author: Author): DelegationPolicy {
+  setPolicy(
+    project: ProjectRecord,
+    nodeId: string,
+    mode: DelegationMode,
+    author: Author,
+  ): DelegationPolicy {
     return this.db.transaction(() => {
       this.assertUser(author);
       const scopeNodeId = this.requireNode(project, nodeId);

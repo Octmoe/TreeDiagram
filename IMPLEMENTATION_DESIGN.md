@@ -30,18 +30,18 @@
 
 ### 1.1 运行时与构建
 
-| 项目 | 固定选择 | 原因 |
-|---|---|---|
-| 运行时 | Node.js 24 LTS | 当前受支持 LTS；兼容所选构建与数据库驱动 |
-| 包管理 | npm workspaces + `package-lock.json` | 无需额外包管理器；根目录统一安装和脚本 |
-| 语言 | TypeScript 6、ESM、strict | 领域状态复杂，必须最大化静态约束 |
-| 服务 | Fastify 5 | 单进程 HTTP 服务、JSON Schema 校验、低样板 |
-| 数据库 | SQLite + `better-sqlite3` 12 | 本地单用户、事务简单、同步访问适合领域事务 |
-| Web | React 19.2 + Vite 8.1 | 单页本地 UI；不需要全栈框架或 SSR |
-| Schema | `@sinclair/typebox` 0.x LTS | 同一 JSON Schema 同时用于 API、运行时校验和模型结构化输出 |
-| 单元/集成测试 | Vitest 4.1 | 与 Vite 8 兼容；测试 TypeScript 领域层和 API |
-| 端到端测试 | Playwright Test 1.x | 验证真实浏览器工作流 |
-| 模型适配 | 官方 `openai` TypeScript SDK + Responses API | 第一版只有一个可运行适配器；使用严格结构化输出 |
+| 项目          | 固定选择                                     | 原因                                                      |
+| ------------- | -------------------------------------------- | --------------------------------------------------------- |
+| 运行时        | Node.js 24 LTS                               | 当前受支持 LTS；兼容所选构建与数据库驱动                  |
+| 包管理        | npm workspaces + `package-lock.json`         | 无需额外包管理器；根目录统一安装和脚本                    |
+| 语言          | TypeScript 6、ESM、strict                    | 领域状态复杂，必须最大化静态约束                          |
+| 服务          | Fastify 5                                    | 单进程 HTTP 服务、JSON Schema 校验、低样板                |
+| 数据库        | SQLite + `better-sqlite3` 12                 | 本地单用户、事务简单、同步访问适合领域事务                |
+| Web           | React 19.2 + Vite 8.1                        | 单页本地 UI；不需要全栈框架或 SSR                         |
+| Schema        | `@sinclair/typebox` 0.x LTS                  | 同一 JSON Schema 同时用于 API、运行时校验和模型结构化输出 |
+| 单元/集成测试 | Vitest 4.1                                   | 与 Vite 8 兼容；测试 TypeScript 领域层和 API              |
+| 端到端测试    | Playwright Test 1.x                          | 验证真实浏览器工作流                                      |
+| 模型适配      | 官方 `openai` TypeScript SDK + Responses API | 第一版只有一个可运行适配器；使用严格结构化输出            |
 
 依赖使用对应 major/minor，首次安装后必须提交精确 `package-lock.json`。不得在实现中使用 `latest` 动态解析。
 
@@ -287,19 +287,9 @@ export const RELATION_TYPES = [
   'supersedes',
 ] as const;
 
-export const APPROVAL_STATES = [
-  'draft',
-  'tentative',
-  'user_confirmed',
-  'ai_confirmed',
-] as const;
+export const APPROVAL_STATES = ['draft', 'tentative', 'user_confirmed', 'ai_confirmed'] as const;
 
-export const EPISTEMIC_STATES = [
-  'unexamined',
-  'assumed',
-  'supported',
-  'refuted',
-] as const;
+export const EPISTEMIC_STATES = ['unexamined', 'assumed', 'supported', 'refuted'] as const;
 
 export const REVIEW_STATES = ['clean', 'required', 'blocked'] as const;
 export const PROJECT_STATES = ['initializing', 'consistent', 'reevaluating', 'blocked'] as const;
@@ -350,18 +340,18 @@ Evidence 规则：
 
 ### 4.4 关系方向和端点规则
 
-| 类型 | from | to | 方向语义 |
-|---|---|---|---|
-| contains | 任意节点 | 任意节点 | 父修订 -> 子修订 |
-| depends_on | 任意设计节点 | 任意设计节点 | 依赖者 -> 被依赖者 |
-| derived_from | 任意非 Evidence 或 Evidence | 任意节点 | 派生结果 -> 来源 |
-| supports | Evidence | Claim/Constraint/Risk | 证据 -> 被支持命题 |
-| contradicts | 非 Topic | 非 Topic | 视为对称，查询必须检查双向 |
-| constrains | Constraint | 非 Evidence | 约束 -> 被约束对象 |
-| addresses | Option/Decision/ValidationMethod | Question | 回应对象 -> 问题 |
-| selects | Decision | Option | 决策 -> 采用选项 |
-| rejects | Decision | Option | 决策 -> 排除选项 |
-| supersedes | 同类或兼容设计节点 | 同类或兼容设计节点 | 新节点 -> 旧节点 |
+| 类型         | from                             | to                    | 方向语义                   |
+| ------------ | -------------------------------- | --------------------- | -------------------------- |
+| contains     | 任意节点                         | 任意节点              | 父修订 -> 子修订           |
+| depends_on   | 任意设计节点                     | 任意设计节点          | 依赖者 -> 被依赖者         |
+| derived_from | 任意非 Evidence 或 Evidence      | 任意节点              | 派生结果 -> 来源           |
+| supports     | Evidence                         | Claim/Constraint/Risk | 证据 -> 被支持命题         |
+| contradicts  | 非 Topic                         | 非 Topic              | 视为对称，查询必须检查双向 |
+| constrains   | Constraint                       | 非 Evidence           | 约束 -> 被约束对象         |
+| addresses    | Option/Decision/ValidationMethod | Question              | 回应对象 -> 问题           |
+| selects      | Decision                         | Option                | 决策 -> 采用选项           |
+| rejects      | Decision                         | Option                | 决策 -> 排除选项           |
+| supersedes   | 同类或兼容设计节点               | 同类或兼容设计节点    | 新节点 -> 旧节点           |
 
 关系端点永远是 `node_revision.id`。同一逻辑关系的新版使用新的 RelationRevision，并通过 `supersedes_relation_revision_id` 指向旧版。
 
@@ -381,18 +371,18 @@ Relation attributes 也是封闭判别联合：`contradicts` 使用 `{ blocking:
 
 Project 状态只允许由应用服务按下表改变：
 
-| 当前 | 命令/条件 | 下一状态 | 说明 |
-|---|---|---|---|
-| initializing | Adopt 首个 ChangeSet | reevaluating | 无 current Release，不写 design.invalidated |
-| initializing | Publish 首个 ready ChangeSet | consistent | 生成 Release 1 |
-| initializing | Abandon | initializing | 回到空 WorkingSet |
-| consistent | 保存候选 | consistent | current Release 不变 |
-| consistent | Adopt | reevaluating | 原子写 invalidated + started |
-| reevaluating | 发现直接阻塞 | blocked | ChangeSet 仍为 reevaluating |
-| blocked | 阻塞已处理并 Resume | reevaluating | 继续未完成 review item |
-| reevaluating | 全部 review resolved 且 checker 通过 | reevaluating | 仅 ChangeSet 进入 ready |
-| reevaluating | Publish ready ChangeSet | consistent | 新 current Release |
-| reevaluating/blocked | Abandon 且有 base Release | consistent | 原子写 design.restored |
+| 当前                 | 命令/条件                            | 下一状态     | 说明                                        |
+| -------------------- | ------------------------------------ | ------------ | ------------------------------------------- |
+| initializing         | Adopt 首个 ChangeSet                 | reevaluating | 无 current Release，不写 design.invalidated |
+| initializing         | Publish 首个 ready ChangeSet         | consistent   | 生成 Release 1                              |
+| initializing         | Abandon                              | initializing | 回到空 WorkingSet                           |
+| consistent           | 保存候选                             | consistent   | current Release 不变                        |
+| consistent           | Adopt                                | reevaluating | 原子写 invalidated + started                |
+| reevaluating         | 发现直接阻塞                         | blocked      | ChangeSet 仍为 reevaluating                 |
+| blocked              | 阻塞已处理并 Resume                  | reevaluating | 继续未完成 review item                      |
+| reevaluating         | 全部 review resolved 且 checker 通过 | reevaluating | 仅 ChangeSet 进入 ready                     |
+| reevaluating         | Publish ready ChangeSet              | consistent   | 新 current Release                          |
+| reevaluating/blocked | Abandon 且有 base Release            | consistent   | 原子写 design.restored                      |
 
 ChangeSet：`open -> reevaluating -> ready -> published`；`open|reevaluating|ready -> abandoned`。禁止从 published/abandoned 恢复。新候选在 reevaluating/ready 阶段产生时，ChangeSet 必须回到 reevaluating，新增影响项后重新检查。
 
@@ -1036,7 +1026,9 @@ interface StructuredGenerationResult<T> {
 }
 
 interface ModelProvider {
-  generateStructured<T>(request: StructuredGenerationRequest<T>): Promise<StructuredGenerationResult<T>>;
+  generateStructured<T>(
+    request: StructuredGenerationRequest<T>,
+  ): Promise<StructuredGenerationResult<T>>;
 }
 ```
 

@@ -133,8 +133,5 @@ export const EventsQuerySchema = Type.Object(
 );
 export type EventsQuery = Static<typeof EventsQuerySchema>;
 
-export const IdParamsSchema = Type.Object(
-  { id: IdSchema },
-  { additionalProperties: false },
-);
+export const IdParamsSchema = Type.Object({ id: IdSchema }, { additionalProperties: false });
 export type IdParams = Static<typeof IdParamsSchema>;

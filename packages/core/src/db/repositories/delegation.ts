@@ -1,5 +1,11 @@
 import type { Database as SqliteDatabase } from 'better-sqlite3';
-import type { AuthorKind, DelegationMode, DelegationPolicy, NodeId, ProjectId } from '@treediagram/contracts';
+import type {
+  AuthorKind,
+  DelegationMode,
+  DelegationPolicy,
+  NodeId,
+  ProjectId,
+} from '@treediagram/contracts';
 import { asId } from '@treediagram/contracts';
 import { optionalRow } from '../row-mappers.js';
 
@@ -74,8 +80,6 @@ export class DelegationRepository {
   }
 
   revoke(id: string, revokedAt: string): void {
-    this.db
-      .prepare('UPDATE delegation_policy SET revoked_at = ? WHERE id = ?')
-      .run(revokedAt, id);
+    this.db.prepare('UPDATE delegation_policy SET revoked_at = ? WHERE id = ?').run(revokedAt, id);
   }
 }

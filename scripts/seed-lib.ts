@@ -161,7 +161,12 @@ export function applySeed(
   const { items } = changeSets.reviewItems(changeSet.id);
   for (const item of items) {
     if (item.status === 'pending') {
-      changeSets.resolveReviewItem(item.id, 'valid', 'seed 初始内容在首个 Release 中确认有效', userAuthor);
+      changeSets.resolveReviewItem(
+        item.id,
+        'valid',
+        'seed 初始内容在首个 Release 中确认有效',
+        userAuthor,
+      );
     }
   }
 

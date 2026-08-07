@@ -1,6 +1,12 @@
 // 用法: node scripts/verify-release.ts --workspace <dir>
 // 通过脚本读取树、关系、历史和事件（M1 交付目标）。
-import { QueryService, RelationService, ReleaseService, WorkspaceService, systemClock } from '@treediagram/core';
+import {
+  QueryService,
+  RelationService,
+  ReleaseService,
+  WorkspaceService,
+  systemClock,
+} from '@treediagram/core';
 import type { NodeId } from '@treediagram/contracts';
 
 const workspaceArg = process.argv[process.argv.indexOf('--workspace') + 1];
@@ -20,18 +26,24 @@ try {
   console.log(`project: ${project.name} [${project.status}]`);
   const release = releases.getCurrentRelease(project);
   console.log(`current Release: v${release.version} (${release.id})`);
-  console.log(`  roots: ${release.rootRevisionIds.length}, nodes: ${release.nodeRevisionIds.length}, relations: ${release.relationRevisionIds.length}`);
+  console.log(
+    `  roots: ${release.rootRevisionIds.length}, nodes: ${release.nodeRevisionIds.length}, relations: ${release.relationRevisionIds.length}`,
+  );
 
   const tree = queries.getTree(project, 'release', null, 10);
   console.log('\n树（release 视图）:');
   for (const { node, revision } of tree.nodes) {
-    console.log(`  [${node.nodeType}] ${revision.displayTitle} <${revision.approvalState}${revision.epistemicState ? '/' + revision.epistemicState : ''}>`);
+    console.log(
+      `  [${node.nodeType}] ${revision.displayTitle} <${revision.approvalState}${revision.epistemicState ? '/' + revision.epistemicState : ''}>`,
+    );
   }
 
   const firstNode = tree.nodes[0];
   if (firstNode) {
     const rel = relations.getRelations(project, firstNode.node.id, 'both', 'release');
-    console.log(`\n节点关系（${firstNode.revision.displayTitle}）: in=${rel.incoming.length} out=${rel.outgoing.length}`);
+    console.log(
+      `\n节点关系（${firstNode.revision.displayTitle}）: in=${rel.incoming.length} out=${rel.outgoing.length}`,
+    );
     for (const { relation } of [...rel.incoming, ...rel.outgoing]) {
       console.log(`  ${relation.relationType} (${relation.id})`);
     }

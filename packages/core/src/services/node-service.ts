@@ -43,7 +43,12 @@ export class NodeService {
     return this.ctx.clock;
   }
 
-  private assertFields(nodeType: NodeType, fields: NodeWriteFields, author: Author, opts: NodeWriteOptions): void {
+  private assertFields(
+    nodeType: NodeType,
+    fields: NodeWriteFields,
+    author: Author,
+    opts: NodeWriteOptions,
+  ): void {
     if (!checkNodeAttributes(nodeType, fields.attributes)) {
       throw new DomainError('VALIDATION_FAILED', 'attributes 不符合节点类型 schema', { nodeType });
     }
@@ -209,7 +214,10 @@ export class NodeService {
     return { node, revision };
   }
 
-  getNodeHistory(project: ProjectRecord, nodeId: string): { node: Node; revisions: NodeRevision[] } {
+  getNodeHistory(
+    project: ProjectRecord,
+    nodeId: string,
+  ): { node: Node; revisions: NodeRevision[] } {
     const node = this.db.repos.node.getNodeById(nodeId);
     if (!node || node.projectId !== project.id) {
       throw new DomainError('NOT_FOUND', '节点不存在', { nodeId });

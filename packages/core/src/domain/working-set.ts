@@ -115,10 +115,14 @@ export function buildWorkingSet(args: BuildWorkingSetArgs): WorkingSet {
       }
       const revision = repos.relation.getRevisionById(head.relationRevisionId);
       if (!revision || revision.relationId !== relationId) {
-        throw new DomainError('CORRUPT_PERSISTED_DATA', 'relation head 的 revision 不属于该 relation', {
-          relationId: head.relationId,
-          relationRevisionId: head.relationRevisionId,
-        });
+        throw new DomainError(
+          'CORRUPT_PERSISTED_DATA',
+          'relation head 的 revision 不属于该 relation',
+          {
+            relationId: head.relationId,
+            relationRevisionId: head.relationRevisionId,
+          },
+        );
       }
       relationRevisionByRelationId.set(relationId, revision);
       removedRelationIds.delete(relationId);

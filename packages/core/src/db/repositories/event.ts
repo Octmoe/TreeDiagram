@@ -34,7 +34,9 @@ export class EventRepository {
     createdAt: string,
   ): EventRecord {
     const result = this.db
-      .prepare('INSERT INTO event_outbox (project_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)')
+      .prepare(
+        'INSERT INTO event_outbox (project_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)',
+      )
       .run(projectId, eventType, JSON.stringify(payload), createdAt);
     const cursor = Number(result.lastInsertRowid);
     return { cursor, projectId, eventType, payload, createdAt };

@@ -165,12 +165,14 @@ export class WorkflowRunRepository {
       sets.push('finished_at = @finishedAt');
       params['finishedAt'] = patch.finishedAt;
     }
-    this.db
-      .prepare(`UPDATE workflow_run SET ${sets.join(', ')} WHERE id = @id`)
-      .run(params);
+    this.db.prepare(`UPDATE workflow_run SET ${sets.join(', ')} WHERE id = @id`).run(params);
   }
 
-  listByProject(projectId: ProjectId, limit: number, beforeCreatedAt: string | null): WorkflowRun[] {
+  listByProject(
+    projectId: ProjectId,
+    limit: number,
+    beforeCreatedAt: string | null,
+  ): WorkflowRun[] {
     const rows = (
       beforeCreatedAt
         ? this.db
@@ -190,9 +192,7 @@ export class WorkflowRunRepository {
   /** 重启恢复：遗留 queued/running 的运行（§4.6 PROCESS_INTERRUPTED）。 */
   listInterrupted(projectId: ProjectId): WorkflowRun[] {
     const rows = this.db
-      .prepare(
-        "SELECT * FROM workflow_run WHERE project_id = ? AND status IN ('queued','running')",
-      )
+      .prepare("SELECT * FROM workflow_run WHERE project_id = ? AND status IN ('queued','running')")
       .all(projectId) as WorkflowRunRow[];
     return rows.map(mapWorkflowRunRow);
   }

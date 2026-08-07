@@ -49,12 +49,18 @@ export class QueryService {
   }
 
   /** 树切片：从顶层（或指定父节点）展开 depth 层，只返回所需节点与 contains 边。 */
-  getTree(project: ProjectRecord, view: ViewMode, parentNodeId: string | null, depth: number): TreeResponse {
+  getTree(
+    project: ProjectRecord,
+    view: ViewMode,
+    parentNodeId: string | null,
+    depth: number,
+  ): TreeResponse {
     const ws = this.resolveView(project, view);
 
     const containsEdges: Array<{ relationId: RelationId; fromNode: NodeId; toNode: NodeId }> = [];
     const revisionToNode = new Map<string, NodeId>();
-    for (const [nodeId, revision] of ws.nodeRevisionByNodeId) revisionToNode.set(revision.id, nodeId);
+    for (const [nodeId, revision] of ws.nodeRevisionByNodeId)
+      revisionToNode.set(revision.id, nodeId);
     for (const [relationId, revision] of ws.relationRevisionByRelationId) {
       if (ws.relationById.get(relationId)?.relationType !== 'contains') continue;
       const fromNode = revisionToNode.get(revision.fromNodeRevisionId);
@@ -143,7 +149,8 @@ export class QueryService {
 
     const offset = filters.cursor ? Number.parseInt(filters.cursor, 10) : 0;
     const page = details.slice(offset, offset + filters.limit);
-    const nextCursor = offset + filters.limit < details.length ? String(offset + filters.limit) : null;
+    const nextCursor =
+      offset + filters.limit < details.length ? String(offset + filters.limit) : null;
     return { nodes: page, nextCursor };
   }
 
@@ -166,9 +173,14 @@ export class QueryService {
     }
   }
 
-  getEvents(project: ProjectRecord, after: number, limit: number): { events: EventRecord[]; nextCursor: number } {
+  getEvents(
+    project: ProjectRecord,
+    after: number,
+    limit: number,
+  ): { events: EventRecord[]; nextCursor: number } {
     const events = this.db.repos.event.list(project.id, after, limit);
-    const nextCursor = events.length > 0 ? (events[events.length - 1] as EventRecord).cursor : after;
+    const nextCursor =
+      events.length > 0 ? (events[events.length - 1] as EventRecord).cursor : after;
     return { events, nextCursor };
   }
 }

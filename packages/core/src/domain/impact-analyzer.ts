@@ -47,7 +47,8 @@ export function analyzeImpact(
 
   // 修订 -> 逻辑节点映射（base 与 working 的并集，用于解析被替代修订）。
   const revisionToNode = new Map<string, NodeId>();
-  for (const [nodeId, revision] of base.nodeRevisionByNodeId) revisionToNode.set(revision.id, nodeId);
+  for (const [nodeId, revision] of base.nodeRevisionByNodeId)
+    revisionToNode.set(revision.id, nodeId);
   for (const [nodeId, revision] of working.nodeRevisionByNodeId)
     revisionToNode.set(revision.id, nodeId);
 
@@ -130,7 +131,10 @@ export function analyzeImpact(
         grow([fromNode, toNode], []);
       }
       // contradicts 两端同时加入
-      if (type === 'contradicts' && ((fromNode && affectedNodes.has(fromNode)) || (toNode && affectedNodes.has(toNode)))) {
+      if (
+        type === 'contradicts' &&
+        ((fromNode && affectedNodes.has(fromNode)) || (toNode && affectedNodes.has(toNode)))
+      ) {
         grow([fromNode, toNode], [relationId]);
       }
       // selects/rejects 变化：Decision、Option 与对应 Question（§9.1）
@@ -139,7 +143,10 @@ export function analyzeImpact(
         if (fromNode) {
           const fromRevision = working.nodeRevisionByNodeId.get(fromNode)?.id;
           for (const [relId2, rel2] of allRelations) {
-            if (relationTypeOf(relId2) === 'addresses' && rel2.fromNodeRevisionId === fromRevision) {
+            if (
+              relationTypeOf(relId2) === 'addresses' &&
+              rel2.fromNodeRevisionId === fromRevision
+            ) {
               grow([revisionToNode.get(rel2.toNodeRevisionId)], [relId2]);
             }
           }
@@ -153,7 +160,11 @@ export function analyzeImpact(
     }
   }
 
-  return { rootChange: false, affectedNodeIds: affectedNodes, affectedRelationIds: affectedRelations };
+  return {
+    rootChange: false,
+    affectedNodeIds: affectedNodes,
+    affectedRelationIds: affectedRelations,
+  };
 }
 
 /** 影响闭包是否越出 ai_managed 作用域（§10）：任一受影响节点不在托管子树内即为越界。 */

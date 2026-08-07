@@ -9,8 +9,14 @@ import type {
   NodeType,
   ProjectId,
 } from '@treediagram/contracts';
-import { asId, AuthorizationSchema, NodeAttributesSchema, RolesSchema } from '@treediagram/contracts';
+import {
+  asId,
+  AuthorizationSchema,
+  NodeAttributesSchema,
+  RolesSchema,
+} from '@treediagram/contracts';
 import { parseJsonColumn, optionalRow } from '../row-mappers.js';
+import { chunkArray, SQLITE_IN_CHUNK_SIZE } from '../chunk.js';
 
 export interface NodeRow {
   id: string;
@@ -128,14 +134,15 @@ export class NodeRepository {
 
   getRevisionsByIds(ids: readonly string[]): Map<string, NodeRevision> {
     const result = new Map<string, NodeRevision>();
-    if (ids.length === 0) return result;
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(`SELECT * FROM node_revision WHERE id IN (${placeholders})`)
-      .all(...ids) as NodeRevisionRow[];
-    for (const row of rows) {
-      const revision = mapNodeRevisionRow(row);
-      result.set(revision.id, revision);
+    for (const chunk of chunkArray(ids, SQLITE_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(`SELECT * FROM node_revision WHERE id IN (${placeholders})`)
+        .all(...chunk) as NodeRevisionRow[];
+      for (const row of rows) {
+        const revision = mapNodeRevisionRow(row);
+        result.set(revision.id, revision);
+      }
     }
     return result;
   }
@@ -163,14 +170,15 @@ export class NodeRepository {
 
   getNodesByIds(ids: readonly string[]): Map<string, Node> {
     const result = new Map<string, Node>();
-    if (ids.length === 0) return result;
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(`SELECT * FROM node WHERE id IN (${placeholders})`)
-      .all(...ids) as NodeRow[];
-    for (const row of rows) {
-      const node = mapNodeRow(row);
-      result.set(node.id, node);
+    for (const chunk of chunkArray(ids, SQLITE_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(`SELECT * FROM node WHERE id IN (${placeholders})`)
+        .all(...chunk) as NodeRow[];
+      for (const row of rows) {
+        const node = mapNodeRow(row);
+        result.set(node.id, node);
+      }
     }
     return result;
   }
@@ -183,11 +191,11 @@ export class NodeRepository {
   // ---- FTS5 ----
 
   ftsUpsert(revisionId: string, title: string, content: string): void {
+    this.db.prepare('DELETE FROM node_revision_fts WHERE revision_id = ?').run(revisionId);
     this.db
-      .prepare('DELETE FROM node_revision_fts WHERE revision_id = ?')
-      .run(revisionId);
-    this.db
-      .prepare('INSERT INTO node_revision_fts (revision_id, display_title, content_text) VALUES (?, ?, ?)')
+      .prepare(
+        'INSERT INTO node_revision_fts (revision_id, display_title, content_text) VALUES (?, ?, ?)',
+      )
       .run(revisionId, title, content);
   }
 

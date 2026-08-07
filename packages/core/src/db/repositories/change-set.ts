@@ -146,14 +146,20 @@ export class ChangeSetRepository {
         .get(changeSetId, nodeId),
     );
     return row
-      ? { nodeId: row.node_id, nodeRevisionId: row.node_revision_id, action: row.action as 'upsert' | 'remove' }
+      ? {
+          nodeId: row.node_id,
+          nodeRevisionId: row.node_revision_id,
+          action: row.action as 'upsert' | 'remove',
+        }
       : null;
   }
 
   getRelationHead(changeSetId: string, relationId: string): RelationHead | null {
     const row = optionalRow<RelationHeadRow>(
       this.db
-        .prepare('SELECT * FROM change_set_relation_head WHERE change_set_id = ? AND relation_id = ?')
+        .prepare(
+          'SELECT * FROM change_set_relation_head WHERE change_set_id = ? AND relation_id = ?',
+        )
         .get(changeSetId, relationId),
     );
     return row

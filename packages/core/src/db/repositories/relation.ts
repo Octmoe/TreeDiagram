@@ -9,6 +9,7 @@ import type {
 } from '@treediagram/contracts';
 import { asId, AuthorizationSchema, RelationAttributesSchema } from '@treediagram/contracts';
 import { parseJsonColumn, optionalRow } from '../row-mappers.js';
+import { chunkArray, SQLITE_IN_CHUNK_SIZE } from '../chunk.js';
 
 export interface RelationRow {
   id: string;
@@ -131,21 +132,24 @@ export class RelationRepository {
 
   getRevisionsByIds(ids: readonly string[]): Map<string, RelationRevision> {
     const result = new Map<string, RelationRevision>();
-    if (ids.length === 0) return result;
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(`SELECT * FROM relation_revision WHERE id IN (${placeholders})`)
-      .all(...ids) as RelationRevisionRow[];
-    for (const row of rows) {
-      const revision = mapRelationRevisionRow(row);
-      result.set(revision.id, revision);
+    for (const chunk of chunkArray(ids, SQLITE_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(`SELECT * FROM relation_revision WHERE id IN (${placeholders})`)
+        .all(...chunk) as RelationRevisionRow[];
+      for (const row of rows) {
+        const revision = mapRelationRevisionRow(row);
+        result.set(revision.id, revision);
+      }
     }
     return result;
   }
 
   listRevisionsByRelation(relationId: string): RelationRevision[] {
     const rows = this.db
-      .prepare('SELECT * FROM relation_revision WHERE relation_id = ? ORDER BY revision_number DESC')
+      .prepare(
+        'SELECT * FROM relation_revision WHERE relation_id = ? ORDER BY revision_number DESC',
+      )
       .all(relationId) as RelationRevisionRow[];
     return rows.map(mapRelationRevisionRow);
   }
@@ -166,28 +170,32 @@ export class RelationRepository {
 
   getRelationsByIds(ids: readonly string[]): Map<string, Relation> {
     const result = new Map<string, Relation>();
-    if (ids.length === 0) return result;
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(`SELECT * FROM relation WHERE id IN (${placeholders})`)
-      .all(...ids) as RelationRow[];
-    for (const row of rows) {
-      const relation = mapRelationRow(row);
-      result.set(relation.id, relation);
+    for (const chunk of chunkArray(ids, SQLITE_IN_CHUNK_SIZE)) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(`SELECT * FROM relation WHERE id IN (${placeholders})`)
+        .all(...chunk) as RelationRow[];
+      for (const row of rows) {
+        const relation = mapRelationRow(row);
+        result.set(relation.id, relation);
+      }
     }
     return result;
   }
 
   /** 找到端点触及给定节点修订集合的全部关系修订（影响分析使用）。 */
   listRevisionsTouchingNodeRevisions(nodeRevisionIds: readonly string[]): RelationRevision[] {
-    if (nodeRevisionIds.length === 0) return [];
-    const placeholders = nodeRevisionIds.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM relation_revision
-         WHERE from_node_revision_id IN (${placeholders}) OR to_node_revision_id IN (${placeholders})`,
-      )
-      .all(...nodeRevisionIds, ...nodeRevisionIds) as RelationRevisionRow[];
-    return rows.map(mapRelationRevisionRow);
+    const result: RelationRevision[] = [];
+    for (const chunk of chunkArray(nodeRevisionIds, SQLITE_IN_CHUNK_SIZE / 2)) {
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM relation_revision
+           WHERE from_node_revision_id IN (${placeholders}) OR to_node_revision_id IN (${placeholders})`,
+        )
+        .all(...chunk, ...chunk) as RelationRevisionRow[];
+      result.push(...rows.map(mapRelationRevisionRow));
+    }
+    return result;
   }
 }

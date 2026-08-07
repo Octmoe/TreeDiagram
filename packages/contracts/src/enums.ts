@@ -111,11 +111,19 @@ export const BUILTIN_ROLES = ['root', 'principle', 'requirement', 'finding'] as 
 export type BuiltinRole = (typeof BUILTIN_ROLES)[number];
 
 // root 角色允许挂载的内核类型（IMPLEMENTATION_DESIGN §4.3）。
-export const ROOT_ALLOWED_NODE_TYPES = ['claim', 'goal', 'constraint'] as const satisfies readonly NodeType[];
+export const ROOT_ALLOWED_NODE_TYPES = [
+  'claim',
+  'goal',
+  'constraint',
+] as const satisfies readonly NodeType[];
 export type RootAllowedNodeType = (typeof ROOT_ALLOWED_NODE_TYPES)[number];
 
 // 认知状态仅适用的内核类型（V1_SPEC §4.4）。
-export const EPISTEMIC_NODE_TYPES = ['claim', 'constraint', 'risk'] as const satisfies readonly NodeType[];
+export const EPISTEMIC_NODE_TYPES = [
+  'claim',
+  'constraint',
+  'risk',
+] as const satisfies readonly NodeType[];
 export type EpistemicNodeType = (typeof EPISTEMIC_NODE_TYPES)[number];
 
 export const CONSISTENCY_ISSUE_CODES = [

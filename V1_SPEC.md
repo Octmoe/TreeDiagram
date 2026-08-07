@@ -112,18 +112,18 @@ classDiagram
 
 ### 4.2 内核节点类型
 
-| 类型 | 用途 | V1 特殊属性 |
-|---|---|---|
-| `Topic` | 组织树形分支，不表达需要证明的命题 | 无 |
-| `Claim` | 普通事实判断、设计原理、发现或推导结论 | 可选角色 |
-| `Goal` | 希望设计实现、优化或保护的结果 | 可选优先级说明 |
-| `Constraint` | 限制可行设计空间的条件 | `hard` 或 `soft` |
-| `Risk` | 可能破坏目标或设计成立性的风险陈述 | 可选影响说明 |
-| `Question` | 尚未解决且可能改变设计的未知项 | `blocking: boolean` |
-| `Option` | 对问题或设计空间的候选响应 | 无 |
-| `Decision` | 采用或排除方案的承诺与理由 | `importance`、`no_alternative_found` |
-| `Evidence` | 支持或反驳命题的可溯源材料 | 证据种类、方法、前提、局限、来源引用 |
-| `ValidationMethod` | 降低不确定性的验证设计 | 方法、目标信号、成功/失败解释 |
+| 类型               | 用途                                   | V1 特殊属性                          |
+| ------------------ | -------------------------------------- | ------------------------------------ |
+| `Topic`            | 组织树形分支，不表达需要证明的命题     | 无                                   |
+| `Claim`            | 普通事实判断、设计原理、发现或推导结论 | 可选角色                             |
+| `Goal`             | 希望设计实现、优化或保护的结果         | 可选优先级说明                       |
+| `Constraint`       | 限制可行设计空间的条件                 | `hard` 或 `soft`                     |
+| `Risk`             | 可能破坏目标或设计成立性的风险陈述     | 可选影响说明                         |
+| `Question`         | 尚未解决且可能改变设计的未知项         | `blocking: boolean`                  |
+| `Option`           | 对问题或设计空间的候选响应             | 无                                   |
+| `Decision`         | 采用或排除方案的承诺与理由             | `importance`、`no_alternative_found` |
+| `Evidence`         | 支持或反驳命题的可溯源材料             | 证据种类、方法、前提、局限、来源引用 |
+| `ValidationMethod` | 降低不确定性的验证设计                 | 方法、目标信号、成功/失败解释        |
 
 `Root` 不是独立类型，而是角色。V1 允许 `Claim`、`Goal` 和 `Constraint` 修订带有 `root` 角色，共同组成当前设计不动点。根部正文没有固定 schema。
 
@@ -188,18 +188,18 @@ Agent 论证和思维实验是合法 Evidence，但必须保存可审查的前�
 
 第一版关系类型：
 
-| 关系 | 含义 |
-|---|---|
-| `contains` | 主要树形归属；每个活动节点修订最多一个活动父关系 |
-| `depends_on` | 目标节点的成立依赖来源节点 |
-| `derived_from` | 目标由来源推导或提取 |
-| `supports` | 来源 Evidence 支持目标命题 |
-| `contradicts` | 两个内容不能同时成立或存在显著张力 |
-| `constrains` | 来源约束目标的可行空间 |
-| `addresses` | Option 或 Decision 回应 Question |
-| `selects` | Decision 采用 Option |
-| `rejects` | Decision 排除 Option |
-| `supersedes` | 新内容或关系替代旧内容或关系 |
+| 关系           | 含义                                             |
+| -------------- | ------------------------------------------------ |
+| `contains`     | 主要树形归属；每个活动节点修订最多一个活动父关系 |
+| `depends_on`   | 目标节点的成立依赖来源节点                       |
+| `derived_from` | 目标由来源推导或提取                             |
+| `supports`     | 来源 Evidence 支持目标命题                       |
+| `contradicts`  | 两个内容不能同时成立或存在显著张力               |
+| `constrains`   | 来源约束目标的可行空间                           |
+| `addresses`    | Option 或 Decision 回应 Question                 |
+| `selects`      | Decision 采用 Option                             |
+| `rejects`      | Decision 排除 Option                             |
+| `supersedes`   | 新内容或关系替代旧内容或关系                     |
 
 每个关系修订必须记录：关系类型、两端修订 ID、建立理由、类型专属属性、创建主体、治理状态、版本和所属 ChangeSet。V1 仅 `contradicts` 有 `{ blocking: boolean }` 属性，其他关系属性为空对象。复核状态由当前 ChangeSet 的 review item 派生，不能为改变运行标记而改写不可变关系修订。
 

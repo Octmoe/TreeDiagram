@@ -97,7 +97,9 @@ export class ProjectRepository {
     updatedAt: string,
   ): void {
     this.db
-      .prepare('UPDATE project SET status = ?, blocked_reason_json = ?, updated_at = ? WHERE id = ?')
+      .prepare(
+        'UPDATE project SET status = ?, blocked_reason_json = ?, updated_at = ? WHERE id = ?',
+      )
       .run(status, blockedReason ? JSON.stringify(blockedReason) : null, updatedAt, projectId);
   }
 

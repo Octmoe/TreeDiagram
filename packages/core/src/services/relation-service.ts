@@ -47,7 +47,11 @@ export class RelationService {
     return this.ctx.clock;
   }
 
-  private assertGovernance(fields: RelationWriteFields, author: Author, opts: RelationWriteOptions): void {
+  private assertGovernance(
+    fields: RelationWriteFields,
+    author: Author,
+    opts: RelationWriteOptions,
+  ): void {
     if (fields.approvalState === 'ai_confirmed') {
       if (!opts.authorization) {
         throw new DomainError('AI_SCOPE_VIOLATION', 'ai_confirmed 关系必须携带托管授权');
@@ -90,7 +94,11 @@ export class RelationService {
     }
     const typeError = validateRelationEndpointTypes(relationType, fromType, toType);
     if (typeError) {
-      throw new DomainError('RELATION_ENDPOINT_INVALID', typeError, { relationType, fromType, toType });
+      throw new DomainError('RELATION_ENDPOINT_INVALID', typeError, {
+        relationType,
+        fromType,
+        toType,
+      });
     }
     if (relationType === 'contradicts') {
       // contradicts 视为对称：反向重复不允许（§7.3）。
@@ -100,7 +108,8 @@ export class RelationService {
         const a = endpointNodeId(ws, revision.fromNodeRevisionId);
         const b = endpointNodeId(ws, revision.toNodeRevisionId);
         if (!a || !b) continue;
-        const samePair = (a === fromNodeId && b === toNodeId) || (a === toNodeId && b === fromNodeId);
+        const samePair =
+          (a === fromNodeId && b === toNodeId) || (a === toNodeId && b === fromNodeId);
         if (samePair) {
           throw new DomainError('VALIDATION_FAILED', '同一对节点之间已存在 contradicts 关系', {
             existingRelationId: relationId,
@@ -119,7 +128,9 @@ export class RelationService {
   ): RelationDetail {
     return this.db.transaction(() => {
       if (!checkRelationAttributes(relationType, fields.attributes)) {
-        throw new DomainError('VALIDATION_FAILED', '关系 attributes 不符合 schema', { relationType });
+        throw new DomainError('VALIDATION_FAILED', '关系 attributes 不符合 schema', {
+          relationType,
+        });
       }
       this.assertGovernance(fields, author, opts);
       const changeSet = this.changeSets.getOrCreateOpen(project, author);
@@ -192,11 +203,15 @@ export class RelationService {
         throw new DomainError('NOT_FOUND', '关系不在当前工作版本中', { relationId });
       }
       if (current.id !== baseRelationRevisionId) {
-        throw new DomainError('STALE_BASE_REVISION', 'base relation revision 与当前工作修订不一致', {
-          relationId,
-          baseRelationRevisionId,
-          currentRevisionId: current.id,
-        });
+        throw new DomainError(
+          'STALE_BASE_REVISION',
+          'base relation revision 与当前工作修订不一致',
+          {
+            relationId,
+            baseRelationRevisionId,
+            currentRevisionId: current.id,
+          },
+        );
       }
       this.assertEndpoints(working, relation.relationType, fields, relation.id);
 

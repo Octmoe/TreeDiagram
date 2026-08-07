@@ -62,7 +62,9 @@ export class ReleaseRepository {
   }
 
   getById(id: string): Release | null {
-    const row = optionalRow<ReleaseRow>(this.db.prepare('SELECT * FROM release WHERE id = ?').get(id));
+    const row = optionalRow<ReleaseRow>(
+      this.db.prepare('SELECT * FROM release WHERE id = ?').get(id),
+    );
     return row ? mapReleaseRow(row, this.parseIds) : null;
   }
 

@@ -51,10 +51,14 @@ export function nextProjectState(current: ProjectState, command: ProjectCommand)
   };
   const next = table[command][current];
   if (!next) {
-    throw new DomainError('INVALID_STATE_TRANSITION', `project 状态 ${current} 不允许命令 ${command}`, {
-      current,
-      command,
-    });
+    throw new DomainError(
+      'INVALID_STATE_TRANSITION',
+      `project 状态 ${current} 不允许命令 ${command}`,
+      {
+        current,
+        command,
+      },
+    );
   }
   return next;
 }
@@ -138,7 +142,10 @@ export function assertRevisionWriteAllowed(input: RevisionWriteRules): void {
   // authorization 与 approval 的绑定（§5.2 注释：ai_confirmed 时必须为 {workflowRunId, policyId}，其他状态必须为 null）。
   if (input.approvalState === 'ai_confirmed') {
     if (!input.authorization) {
-      throw new DomainError('AI_SCOPE_VIOLATION', 'ai_confirmed 必须携带 workflowRunId 与 policyId 授权');
+      throw new DomainError(
+        'AI_SCOPE_VIOLATION',
+        'ai_confirmed 必须携带 workflowRunId 与 policyId 授权',
+      );
     }
     if (input.authorKind !== 'agent') {
       throw new DomainError('AI_SCOPE_VIOLATION', 'ai_confirmed 只能由 agent 主体写入');
@@ -181,7 +188,10 @@ export function assertEvidenceAttributesValid(attributes: unknown): void {
 export function assertDecisionAttributesValid(attributes: unknown, contentText: string): void {
   const attrs = attributes as DecisionAttributes;
   if (attrs.importance === 'important') {
-    if (attrs.noAlternativeFound && (!attrs.alternativeSearchNote || attrs.alternativeSearchNote.trim().length === 0)) {
+    if (
+      attrs.noAlternativeFound &&
+      (!attrs.alternativeSearchNote || attrs.alternativeSearchNote.trim().length === 0)
+    ) {
       throw new DomainError(
         'VALIDATION_FAILED',
         'noAlternativeFound=true 的重要决策必须提供 alternativeSearchNote',

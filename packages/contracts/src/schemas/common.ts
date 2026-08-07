@@ -79,7 +79,9 @@ export const LIMITS = {
 function literals<T extends readonly string[]>(
   values: T,
 ): { -readonly [K in keyof T]: TLiteral<T[K] & string> } {
-  return values.map((v) => Type.Literal(v)) as { -readonly [K in keyof T]: TLiteral<T[K] & string> };
+  return values.map((v) => Type.Literal(v)) as {
+    -readonly [K in keyof T]: TLiteral<T[K] & string>;
+  };
 }
 
 export const NodeTypeSchema = Type.Union(literals(NODE_TYPES));
@@ -105,9 +107,7 @@ export const AuthScopeSchema = Type.Union(literals(AUTH_SCOPES));
 
 /** 用户/API 侧可指定的治理状态：ai_confirmed 只能由 ProposalApplier 带授权写入。 */
 export const USER_SETTABLE_APPROVAL_STATES = ['draft', 'tentative', 'user_confirmed'] as const;
-export const UserSettableApprovalStateSchema = Type.Union(
-  literals(USER_SETTABLE_APPROVAL_STATES),
-);
+export const UserSettableApprovalStateSchema = Type.Union(literals(USER_SETTABLE_APPROVAL_STATES));
 
 export const RolesSchema = Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.role }), {
   maxItems: LIMITS.rolesMaxItems,

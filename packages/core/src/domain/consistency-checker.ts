@@ -48,7 +48,15 @@ export function checkConsistency(input: ConsistencyInput): ConsistencyIssue[] {
     const severity = (BLOCKING_ISSUE_CODES as readonly string[]).includes(code)
       ? ('blocking' as const)
       : ('warning' as const);
-    issues.push({ code, severity, entityKind, entityRevisionId, relatedRevisionIds, message, details });
+    issues.push({
+      code,
+      severity,
+      entityKind,
+      entityRevisionId,
+      relatedRevisionIds,
+      message,
+      details,
+    });
   };
 
   const nodeTypeOf = (nodeId: NodeId): NodeType | null => ws.nodeById.get(nodeId)?.nodeType ?? null;
@@ -86,16 +94,30 @@ export function checkConsistency(input: ConsistencyInput): ConsistencyIssue[] {
   for (const root of roots) {
     const type = nodeTypeOf(root.nodeId);
     if (!type || !(ROOT_ALLOWED_NODE_TYPES as readonly string[]).includes(type)) {
-      emit('ROOT_INVALID_TYPE', 'node_revision', root.id, [], 'root 角色只能挂在 claim/goal/constraint 上', {
-        nodeType: type,
-      });
+      emit(
+        'ROOT_INVALID_TYPE',
+        'node_revision',
+        root.id,
+        [],
+        'root 角色只能挂在 claim/goal/constraint 上',
+        {
+          nodeType: type,
+        },
+      );
     }
     if (root.approvalState === 'ai_confirmed') {
       emit('ROOT_AI_CONFIRMED', 'node_revision', root.id, [], 'root 不能由 AI 确认');
     } else if (root.approvalState !== 'user_confirmed') {
-      emit('ROOT_NOT_USER_CONFIRMED', 'node_revision', root.id, [], 'root 修订必须是 user_confirmed', {
-        approvalState: root.approvalState,
-      });
+      emit(
+        'ROOT_NOT_USER_CONFIRMED',
+        'node_revision',
+        root.id,
+        [],
+        'root 修订必须是 user_confirmed',
+        {
+          approvalState: root.approvalState,
+        },
+      );
     }
   }
 
@@ -106,9 +128,16 @@ export function checkConsistency(input: ConsistencyInput): ConsistencyIssue[] {
     });
   }
   if (input.reviewCounts.blocked > 0) {
-    emit('REVIEW_BLOCKED', 'project', null, [], `存在 ${input.reviewCounts.blocked} 个被阻塞复核项`, {
-      blocked: input.reviewCounts.blocked,
-    });
+    emit(
+      'REVIEW_BLOCKED',
+      'project',
+      null,
+      [],
+      `存在 ${input.reviewCounts.blocked} 个被阻塞复核项`,
+      {
+        blocked: input.reviewCounts.blocked,
+      },
+    );
   }
 
   // ---- 3. contains 结构 ----
@@ -240,7 +269,11 @@ export function checkConsistency(input: ConsistencyInput): ConsistencyIssue[] {
   const dependsOnRelations = relationsOf('depends_on');
   for (const revision of ws.nodeRevisionByNodeId.values()) {
     if (nodeTypeOf(revision.nodeId) !== 'decision') continue;
-    const attrs = revision.attributes as { importance?: string; noAlternativeFound?: boolean; alternativeSearchNote?: string | null };
+    const attrs = revision.attributes as {
+      importance?: string;
+      noAlternativeFound?: boolean;
+      alternativeSearchNote?: string | null;
+    };
     if (attrs.importance !== 'important') {
       // SIMPLE_DECISION_HAS_WIDE_IMPACT（warning）
       const dependentCount = dependsOnRelations.filter(
@@ -332,7 +365,13 @@ export function checkConsistency(input: ConsistencyInput): ConsistencyIssue[] {
       (rel) => rel.toNodeRevisionId === revision.id && revisionIsActive(rel.fromNodeRevisionId),
     );
     if (blocking && !addressed) {
-      emit('BLOCKING_QUESTION', 'node_revision', revision.id, [], '存在标记为 blocking 的未解决 Question');
+      emit(
+        'BLOCKING_QUESTION',
+        'node_revision',
+        revision.id,
+        [],
+        '存在标记为 blocking 的未解决 Question',
+      );
     } else if (!blocking && !addressed) {
       emit(
         'UNRESOLVED_NON_BLOCKING_QUESTION',
