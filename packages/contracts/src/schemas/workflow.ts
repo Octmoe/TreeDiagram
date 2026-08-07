@@ -43,6 +43,8 @@ export const StartWorkflowRequestSchema = Type.Object(
   {
     workflowType: WorkflowTypeSchema,
     targetNodeId: Nullable(NodeIdSchema),
+    /** reevaluate 的目标 ChangeSet（§13.5）；其余工作流为 null。 */
+    changeSetId: Nullable(ChangeSetIdSchema),
     sourceAssetIds: Type.Array(SourceAssetIdSchema, { maxItems: 20 }),
     focusInstruction: Nullable(Type.String({ maxLength: LIMITS.focusInstruction })),
   },

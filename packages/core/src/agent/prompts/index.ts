@@ -67,3 +67,21 @@ export const UNBOX_INSTRUCTIONS = composeInstructions(
 - 探索不是否定现状：不要 revise 或反驳已确认节点，只提出平行候选。
 - 停止条件：每个非 root 约束都被挑战过即 completed；需要用户选择探索方向时 needs_user。`,
 );
+
+/** Reevaluate 批次复核（§13.5/§9.3）：对一批 review item 给出裁决。 */
+export const REEVALUATE_INSTRUCTIONS = composeInstructions(
+  '你是 TreeDiagram 的复核 Agent。任务：对 ChangeSet 影响闭包中的一批 review item 逐项给出复核裁决，输出 ReevaluationBatchResult。',
+  `本步要点：
+- data.items 中每一项都必须且在 results 中出现一次（按 reviewItemId 对应），不得遗漏或重复。
+- 裁决语义（§9.3）：
+  valid：内容在新上下文中仍然成立；若 relation 端点已变化，必须在 relationActions 中给出
+    对应的 revise（端点迁移），并把其 proposalRef 写入 relationMigrationProposalRefs；
+  revise：需要修订——在 nodeActions/relationActions 中给出对原逻辑实体的 revise 动作，
+    并将其 proposalRef 写入 replacementProposalRef；
+  refute：仅对可认知节点——给出 epistemicState=refuted 的 revise 动作；
+  supersede：给出替代新节点（create）以及新节点 supersedes 旧节点的关系（新 -> 旧）；
+  unknown：无法判断，交用户处理（该 item 将被 block）。
+- 所有替代/迁移动作必须与本批次 results 一致引用；不虚构外部事实。
+- 停止条件：全部 item 都有确定裁决即 completed；存在必须用户裁决的分歧时 needs_user
+  并写入 questionsForUser。`,
+);

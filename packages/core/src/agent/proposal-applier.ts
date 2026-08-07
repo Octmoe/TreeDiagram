@@ -33,6 +33,11 @@ export interface ApplyResult {
 export interface ApplyOptions {
   /** 本 run 生效的托管策略（ai_managed 时由 runner 解析；否则 null）。 */
   effectivePolicy: DelegationPolicy | null;
+  /**
+   * 跳过 §4.6 候选影响登记。仅 reevaluate 工作流透传 true：
+   * 迁移/替代修订本身是复核决议（§9.3），不得再重建复核项。
+   */
+  skipImpactRegistration?: boolean | undefined;
 }
 
 function assertProposal(proposal: unknown): asserts proposal is DesignProposal {
@@ -129,6 +134,7 @@ export class ProposalApplier {
         if (action.operation === 'create') {
           const detail = this.nodes.createCandidateNode(project, action.nodeType, fields, author, {
             authorization,
+            skipImpactRegistration: opts.skipImpactRegistration,
           });
           revisionId = detail.revision.id;
         } else {
@@ -161,7 +167,7 @@ export class ProposalApplier {
             action.baseRevisionId,
             fields,
             author,
-            { authorization },
+            { authorization, skipImpactRegistration: opts.skipImpactRegistration },
           );
           revisionId = detail.revision.id;
         }
@@ -215,7 +221,7 @@ export class ProposalApplier {
             action.relationType,
             fields,
             author,
-            { authorization },
+            { authorization, skipImpactRegistration: opts.skipImpactRegistration },
           );
           revisionId = detail.revision.id;
         } else {
@@ -246,7 +252,7 @@ export class ProposalApplier {
             action.baseRelationRevisionId,
             fields,
             author,
-            { authorization },
+            { authorization, skipImpactRegistration: opts.skipImpactRegistration },
           );
           revisionId = detail.revision.id;
         }

@@ -51,6 +51,7 @@ export function WorkflowPanel() {
       await api.post('/workflows', {
         workflowType,
         targetNodeId: state.selectedNodeId,
+        changeSetId: null, // reevaluate 时由服务端按 live ChangeSet 不变量解析
         sourceAssetIds: [],
         focusInstruction: focusInstruction.trim() || null,
       });
@@ -59,7 +60,7 @@ export function WorkflowPanel() {
       refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'MODEL_NOT_CONFIGURED') {
-        setError('Agent 工作流尚未配置模型提供方（M3 交付）。当前可继续使用手动编辑。');
+        setError('Agent 工作流尚未配置模型提供方。当前可继续使用手动编辑。');
       } else {
         setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
       }

@@ -304,6 +304,7 @@ describe('M2 HTTP API', () => {
       payload: {
         workflowType: 'initialize',
         targetNodeId: null,
+        changeSetId: null,
         sourceAssetIds: [],
         focusInstruction: null,
       },

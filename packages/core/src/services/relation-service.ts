@@ -31,6 +31,12 @@ export interface RelationWriteFields {
 
 export interface RelationWriteOptions {
   authorization?: Authorization | null;
+  /**
+   * 跳过 §4.6 候选影响登记。仅 reevaluate 工作流使用：其写入的迁移/替代修订
+   * 本身就是复核决议（§9.3），不得再触发影响闭包重建复核项（否则死循环）。
+   * 用户手工编辑与其他工作流不得设置。
+   */
+  skipImpactRegistration?: boolean | undefined;
 }
 
 export class RelationService {
@@ -169,7 +175,7 @@ export class RelationService {
         relationRevisionId: revision.id,
         action: 'upsert',
       });
-      if (changeSet.status !== 'open') {
+      if (changeSet.status !== 'open' && !opts.skipImpactRegistration) {
         this.changeSets.registerCandidateImpact(changeSet.id);
       }
       return { relation, revision };
@@ -237,7 +243,7 @@ export class RelationService {
         relationRevisionId: revision.id,
         action: 'upsert',
       });
-      if (changeSet.status !== 'open') {
+      if (changeSet.status !== 'open' && !opts.skipImpactRegistration) {
         this.changeSets.registerCandidateImpact(changeSet.id);
       }
       return { relation, revision };

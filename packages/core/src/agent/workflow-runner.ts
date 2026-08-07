@@ -1,8 +1,15 @@
 import { createHash } from 'node:crypto';
-import type { StartWorkflowRequest, WorkflowRun, WorkflowType } from '@treediagram/contracts';
-import { DesignProposalSchema } from '@treediagram/contracts';
+import type {
+  ReviewItem,
+  StartWorkflowRequest,
+  WorkflowRun,
+  WorkflowType,
+} from '@treediagram/contracts';
+import { DesignProposalSchema, ReevaluationBatchResultSchema } from '@treediagram/contracts';
 import { DomainError } from '../errors.js';
 import { resolveDelegation } from '../domain/delegation-resolver.js';
+import { checkConsistency } from '../domain/consistency-checker.js';
+import type { WorkingSet } from '../domain/working-set.js';
 import { newId } from '../ids.js';
 import type { ServiceContext, Author } from '../services/types.js';
 import { ChangeSetService } from '../services/change-set-service.js';
@@ -14,14 +21,18 @@ import {
   buildDeriveContext,
   buildGrillContext,
   buildInitializeContext,
+  buildReevaluationContext,
   buildUnboxContext,
+  type ReevaluationItemView,
 } from './context-builder.js';
+import { orderReviewItemsByDependency } from './batch-order.js';
 import { ProposalApplier } from './proposal-applier.js';
 import {
   DERIVE_INSTRUCTIONS,
   GRILL_INSTRUCTIONS,
   INITIALIZE_EXTRACT_INSTRUCTIONS,
   INITIALIZE_ROOT_INSTRUCTIONS,
+  REEVALUATE_INSTRUCTIONS,
   UNBOX_INSTRUCTIONS,
 } from './prompts/index.js';
 
@@ -30,7 +41,7 @@ import {
  * queued → running/load_context → generate → validate_output → apply_proposal
  *   → waiting_user | succeeded | failed。
  * 每步事务更新 checkpoint；resume 幂等（proposal 已应用则不重复创建）。
- * M3 支持 initialize/derive；grill/unbox/reevaluate 在 M4/M5 接入。
+ * initialize/derive（M3）、grill/unbox（M4）、reevaluate（M5，批次循环独立路径）。
  */
 
 export interface WorkflowRunnerConfig {
@@ -52,6 +63,17 @@ interface RunCheckpoint {
   applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
   /** ai_managed 自动 adopt 结果（§10）。 */
   autoAdopted?: boolean;
+  /** reevaluate：进行中的批次（崩溃恢复幂等：result 已生成则不重新生成，applied 则不重复应用）。 */
+  pendingBatch?: {
+    itemIds: string[];
+    result: unknown;
+    applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
+  } | null;
+  /** reevaluate：已完成批次记录。 */
+  batches?: Array<{
+    itemIds: string[];
+    applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
+  }>;
 }
 
 const EMPTY_CHECKPOINT: RunCheckpoint = {
@@ -119,9 +141,14 @@ export class CoreWorkflowRunner {
 
   private assertAvailable(project: ProjectRecord, workflowType: WorkflowType): void {
     if (workflowType === 'reevaluate') {
-      throw new DomainError('WORKFLOW_NOT_AVAILABLE', 'reevaluate 工作流在 M5 提供', {
-        workflowType,
-      });
+      if (project.status !== 'reevaluating' && project.status !== 'blocked') {
+        throw new DomainError(
+          'WORKFLOW_NOT_AVAILABLE',
+          'reevaluate 需要 reevaluating/blocked 状态（存在已 adopt 的 ChangeSet）',
+          { status: project.status },
+        );
+      }
+      return;
     }
     if (workflowType === 'initialize' && project.status !== 'initializing') {
       throw new DomainError('WORKFLOW_NOT_AVAILABLE', 'initialize 仅可在 initializing 状态启动', {
@@ -194,7 +221,7 @@ export class CoreWorkflowRunner {
       }
       // 未应用则按失败路径继续执行
     }
-    if (this.db.repos.workflowRun.hasActiveRun(project.id)) {
+    if (this.db.repos.workflowRun.hasActiveRun(project.id, run.id)) {
       throw new DomainError('WORKFLOW_ALREADY_RUNNING', '已有进行中的 WorkflowRun');
     }
     const now = this.clock.now();
@@ -295,6 +322,12 @@ export class CoreWorkflowRunner {
       const project = this.db.repos.project.requireSingleton();
       const author: Author = { kind: 'agent', ref: this.config.model };
       const checkpoint = checkpointOf(run);
+
+      if (run.workflowType === 'reevaluate') {
+        // §13.5：批次复核走独立执行路径（共享 cancel/失败收尾逻辑）。
+        await this.executeReevaluate(run, runId, project, author, checkpoint, controller);
+        return;
+      }
 
       // ---- load_context ----
       let context: Record<string, unknown>;
@@ -569,6 +602,424 @@ export class CoreWorkflowRunner {
     if (result.mode !== 'ai_managed' || !result.policyId) return null;
     return this.db.repos.delegation.getById(result.policyId);
   }
+
+  // ---- Reevaluate（§13.5）----
+
+  /**
+   * 批次复核循环：pending review items 按 depends_on SCC 逆依赖序分批（≤20），
+   * 每批 generate → validate → apply 动作 → 逐项裁决，checkpoint 保证中断幂等。
+   */
+  private async executeReevaluate(
+    run: WorkflowRun,
+    runId: string,
+    project: ProjectRecord,
+    author: Author,
+    checkpoint: RunCheckpoint,
+    controller: AbortController,
+  ): Promise<void> {
+    const input = run.input as unknown as StartWorkflowRequest;
+    const changeSet = this.changeSets.getLive(project);
+    // ready 仅出现在 resume 路径：用户裁决完最后一批 blocked 后 afterReviewProgress
+    // 已将 ChangeSet 置 ready；此时无 pending 项，批次循环直接退出并走 finish。
+    if (!changeSet || (changeSet.status !== 'reevaluating' && changeSet.status !== 'ready')) {
+      throw new DomainError(
+        'WORKFLOW_NOT_AVAILABLE',
+        'reevaluate 需要 reevaluating 状态的 live ChangeSet',
+        { changeSetStatus: changeSet?.status ?? null },
+      );
+    }
+    if (input.changeSetId && input.changeSetId !== changeSet.id) {
+      throw new DomainError('VALIDATION_FAILED', 'changeSetId 与 live ChangeSet 不一致', {
+        requested: input.changeSetId,
+        live: changeSet.id,
+      });
+    }
+    const patchCheckpoint = (currentStep?: string) => {
+      run = this.patch(runId, {
+        ...(currentStep ? { currentStep } : {}),
+        checkpoint: checkpoint as unknown as Record<string, unknown>,
+      });
+    };
+    run = this.patch(runId, { changeSetId: changeSet.id });
+    checkpoint.steps.push('load_context');
+    patchCheckpoint('running/generate');
+
+    const blockingQuestions: unknown[] = [];
+    let lastStopReason = 'completed';
+    for (;;) {
+      this.assertNotCancelled(runId);
+      const pending = this.db.repos.reviewItem.listByChangeSet(changeSet.id, ['pending']);
+      if (pending.length === 0) break;
+      const { working } = this.changeSets.buildViews(changeSet);
+      const batch = orderReviewItemsByDependency(pending, working).slice(0, 20);
+      const batchIds = batch.map((i) => i.id);
+
+      let batchState = checkpoint.pendingBatch ?? null;
+      if (!batchState || !sameIds(batchState.itemIds, batchIds)) {
+        const roots: ReturnType<typeof this.reevaluationRoots> = this.reevaluationRoots(working);
+        const context = buildReevaluationContext(
+          changeSet.id,
+          roots,
+          batch.map((item) => this.reevaluationItemView(item)),
+        );
+        checkpoint.contextHash = sha256Hex(JSON.stringify(context));
+        const generated = await this.config.provider.generateStructured({
+          model: this.config.model,
+          instructions: REEVALUATE_INSTRUCTIONS,
+          input: JSON.stringify(context),
+          outputSchemaName: 'ReevaluationBatchResult',
+          outputSchema: ReevaluationBatchResultSchema,
+          reasoningEffort: 'medium',
+          safetyIdentifier: this.config.safetyIdentifier,
+          signal: controller.signal,
+        });
+        this.assertNotCancelled(runId);
+        this.validateBatchResult(batch, generated.value);
+        batchState = { itemIds: batchIds, result: generated.value, applied: null };
+        checkpoint.pendingBatch = batchState;
+        checkpoint.providerResponseId = generated.providerResponseId;
+        checkpoint.usage = generated.usage as unknown as Record<string, unknown>;
+        checkpoint.steps.push('generate_batch');
+        patchCheckpoint('running/apply_proposal');
+      }
+
+      const result = batchState.result as BatchResultShape;
+      if (!batchState.applied) {
+        // 批次附带的修订/迁移动作复用 ProposalApplier 原子写入
+        const synthetic = {
+          schemaVersion: 1,
+          workflowType: 'derive',
+          summary: result.summary,
+          nodeActions: result.nodeActions,
+          relationActions: result.relationActions,
+          questionsForUser: result.questionsForUser,
+          warnings: [],
+          stopReason: result.stopReason,
+        };
+        const applied = this.db.transaction(() =>
+          this.applier.apply(
+            project,
+            run,
+            synthetic,
+            // 迁移/替代修订本身是复核决议（§9.3），不得再触发 §4.6 影响登记
+            { effectivePolicy: null, skipImpactRegistration: true },
+            author,
+          ),
+        );
+        batchState.applied = {
+          nodeRevisionIds: applied.appliedNodeRevisionIds,
+          relationRevisionIds: applied.appliedRelationRevisionIds,
+        };
+        checkpoint.pendingBatch = batchState;
+        patchCheckpoint();
+      }
+
+      // 逐项裁决（幂等：已非 pending 的 item 跳过，§9.4 resolved 不回退）
+      for (const entry of result.results) {
+        const item = this.db.repos.reviewItem.getById(entry.reviewItemId);
+        if (!item || item.status !== 'pending') continue;
+        if (entry.verdict === 'unknown') {
+          this.changeSets.blockReviewItem(item.id, entry.rationale, author);
+        } else {
+          this.changeSets.resolveReviewItem(item.id, entry.verdict, entry.rationale, author);
+        }
+      }
+      checkpoint.batches = [
+        ...(checkpoint.batches ?? []),
+        { itemIds: batchState.itemIds, applied: batchState.applied },
+      ];
+      checkpoint.pendingBatch = null;
+      checkpoint.steps.push('apply_batch');
+      patchCheckpoint('running/generate');
+
+      blockingQuestions.push(...result.questionsForUser.filter((q) => q.blocking));
+      lastStopReason = result.stopReason;
+      if (result.questionsForUser.some((q) => q.blocking) || result.stopReason === 'needs_user') {
+        break;
+      }
+    }
+
+    // ---- finish：ready → succeeded；否则 waiting_user（用户处理 blocked/checker 阻塞）----
+    const counts = this.db.repos.reviewItem.countsByChangeSet(changeSet.id);
+    const freshChangeSet = this.changeSets.require(changeSet.id);
+    const waitingReason =
+      blockingQuestions.length > 0
+        ? 'blocking_question'
+        : lastStopReason === 'needs_user'
+          ? 'needs_user'
+          : counts.pending > 0 || counts.blocked > 0
+            ? 'review_items_remain'
+            : freshChangeSet.status !== 'ready'
+              ? 'checker_blocking'
+              : null;
+    let blockingIssues: unknown[] = [];
+    if (waitingReason === 'checker_blocking') {
+      const { working } = this.changeSets.buildViews(freshChangeSet);
+      blockingIssues = checkConsistency({
+        workingSet: working,
+        reviewCounts: { pending: counts.pending, blocked: counts.blocked },
+        policies: this.db.repos.delegation.listActiveByProject(project.id),
+      }).filter((issue) => issue.severity === 'blocking');
+    }
+    const finalStatus = waitingReason === null ? 'succeeded' : 'waiting_user';
+    const now = this.clock.now();
+    this.db.repos.workflowRun.update(
+      runId,
+      {
+        status: finalStatus,
+        currentStep: finalStatus,
+        summary: {
+          changeSetId: changeSet.id,
+          batchCount: (checkpoint.batches ?? []).length,
+          batches: checkpoint.batches ?? [],
+          remaining: { pending: counts.pending, blocked: counts.blocked },
+          changeSetStatus: freshChangeSet.status,
+          waitingReason,
+          blockingIssues,
+          questionsForUser: blockingQuestions,
+        },
+        finishedAt: finalStatus === 'succeeded' ? now : null,
+      },
+      now,
+    );
+  }
+
+  private reevaluationRoots(working: WorkingSet) {
+    const roots = [];
+    for (const [nodeId] of working.nodeById) {
+      const revision = working.nodeRevisionByNodeId.get(nodeId);
+      const node = working.nodeById.get(nodeId);
+      if (node && revision?.roles.includes('root')) {
+        roots.push({
+          nodeId: node.id as string,
+          revisionId: revision.id as string,
+          nodeType: node.nodeType as string,
+          displayTitle: revision.displayTitle,
+          contentText: revision.contentText,
+          roles: revision.roles,
+          approvalState: revision.approvalState as string,
+          epistemicState: revision.epistemicState as string | null,
+          attributes: revision.attributes as Record<string, unknown>,
+        });
+      }
+    }
+    return roots;
+  }
+
+  /** 批次 item 的不可信视图（含被替代修订内容；裁决需要看到原文）。 */
+  private reevaluationItemView(item: ReviewItem): ReevaluationItemView {
+    let entity: Record<string, unknown> | null = null;
+    if (item.entityKind === 'node_revision' && item.entityRevisionId) {
+      const revision = this.db.repos.node.getRevisionById(item.entityRevisionId);
+      if (revision) {
+        entity = {
+          nodeId: revision.nodeId,
+          revisionId: revision.id,
+          displayTitle: revision.displayTitle,
+          contentText: revision.contentText,
+          roles: revision.roles,
+          approvalState: revision.approvalState,
+          epistemicState: revision.epistemicState,
+          attributes: revision.attributes,
+        };
+      }
+    } else if (item.entityKind === 'relation_revision' && item.entityRevisionId) {
+      const revision = this.db.repos.relation.getRevisionById(item.entityRevisionId);
+      if (revision) {
+        const relation = this.db.repos.relation.getRelationById(revision.relationId);
+        const from = this.db.repos.node.getRevisionById(revision.fromNodeRevisionId);
+        const to = this.db.repos.node.getRevisionById(revision.toNodeRevisionId);
+        entity = {
+          relationId: revision.relationId,
+          revisionId: revision.id,
+          relationType: relation?.relationType ?? null,
+          fromRevisionId: revision.fromNodeRevisionId,
+          toRevisionId: revision.toNodeRevisionId,
+          fromTitle: from?.displayTitle ?? null,
+          toTitle: to?.displayTitle ?? null,
+          rationaleText: revision.rationaleText,
+          approvalState: revision.approvalState,
+        };
+      }
+    }
+    return {
+      reviewItemId: item.id,
+      entityKind: item.entityKind,
+      reasonCode: item.reasonCode,
+      entity,
+    };
+  }
+
+  /** 批次结果校验（§12.5/§13.5）：覆盖完整、裁决与替代/迁移动作一致。 */
+  private validateBatchResult(batch: ReviewItem[], raw: unknown): void {
+    const result = raw as BatchResultShape;
+    const invalid = (message: string, details: Record<string, unknown> = {}): never =>
+      this.failModelOutput(message, details);
+    const batchIds = new Set<string>(batch.map((i) => i.id as string));
+    const seen = new Set<string>();
+    for (const entry of result.results) {
+      if (!batchIds.has(entry.reviewItemId)) {
+        invalid('结果引用了批次外 review item', { reviewItemId: entry.reviewItemId });
+      }
+      if (seen.has(entry.reviewItemId)) {
+        invalid('review item 裁决重复', { reviewItemId: entry.reviewItemId });
+      }
+      seen.add(entry.reviewItemId);
+    }
+    for (const id of batchIds) {
+      if (!seen.has(id)) invalid('批次 item 缺少裁决', { reviewItemId: id });
+    }
+
+    const nodeActionByRef = new Map(result.nodeActions.map((a) => [a.proposalRef, a]));
+    const relationActionByRef = new Map(result.relationActions.map((a) => [a.proposalRef, a]));
+    for (const entry of result.results) {
+      const item = batch.find((i) => i.id === entry.reviewItemId)!;
+      this.validateBatchEntry(item, entry, nodeActionByRef, relationActionByRef);
+    }
+  }
+
+  private validateBatchEntry(
+    item: ReviewItem,
+    entry: BatchResultShape['results'][number],
+    nodeActionByRef: Map<string, BatchNodeAction>,
+    relationActionByRef: Map<string, BatchRelationAction>,
+  ): void {
+    const invalid = (message: string, details: Record<string, unknown> = {}): never =>
+      this.failModelOutput(message, details);
+    const replacement = () => {
+      if (!entry.replacementProposalRef) {
+        invalid(`${entry.verdict} 裁决缺少 replacementProposalRef`, {
+          reviewItemId: entry.reviewItemId,
+        });
+      }
+      return (
+        nodeActionByRef.get(entry.replacementProposalRef!) ??
+        relationActionByRef.get(entry.replacementProposalRef!)
+      );
+    };
+    switch (entry.verdict) {
+      case 'valid': {
+        // valid 只解决 review item；端点变更的关系必须另有 relation revision（§13.5）
+        if (item.entityKind === 'relation_revision' && item.entityRevisionId) {
+          const revision = this.db.repos.relation.getRevisionById(item.entityRevisionId);
+          if (revision && this.relationEndpointsStale(revision)) {
+            const migrated = entry.relationMigrationProposalRefs.some((ref) => {
+              const action = relationActionByRef.get(ref);
+              return (
+                action?.operation === 'revise' && action.logicalRelationId === revision.relationId
+              );
+            });
+            if (!migrated) {
+              invalid('valid 的关系端点已变化，必须另有 relation revision', {
+                reviewItemId: entry.reviewItemId,
+              });
+            }
+          }
+        }
+        return;
+      }
+      case 'revise': {
+        const action = replacement();
+        if (item.entityKind === 'node_revision') {
+          const nodeId = item.entityRevisionId
+            ? this.db.repos.node.getRevisionById(item.entityRevisionId)?.nodeId
+            : null;
+          if (
+            !action ||
+            !('logicalNodeId' in action) ||
+            action.operation !== 'revise' ||
+            action.logicalNodeId !== nodeId
+          ) {
+            invalid('revise 裁决必须提供对原节点的 revise 动作', {
+              reviewItemId: entry.reviewItemId,
+            });
+          }
+        } else {
+          const relationId = item.entityRevisionId
+            ? this.db.repos.relation.getRevisionById(item.entityRevisionId)?.relationId
+            : null;
+          if (
+            !action ||
+            !('logicalRelationId' in action) ||
+            action.operation !== 'revise' ||
+            action.logicalRelationId !== relationId
+          ) {
+            invalid('revise 裁决必须提供对原关系的 revise 动作', {
+              reviewItemId: entry.reviewItemId,
+            });
+          }
+        }
+        return;
+      }
+      case 'refute': {
+        if (item.entityKind !== 'node_revision') {
+          invalid('refute 仅适用于节点', { reviewItemId: entry.reviewItemId });
+        }
+        const action = replacement();
+        if (
+          !action ||
+          !('epistemicState' in action) ||
+          action.operation !== 'revise' ||
+          action.epistemicState !== 'refuted'
+        ) {
+          invalid('refute 裁决必须提供 epistemicState=refuted 的 revise 动作', {
+            reviewItemId: entry.reviewItemId,
+          });
+        }
+        return;
+      }
+      case 'supersede': {
+        if (item.entityKind !== 'node_revision') {
+          invalid('supersede 仅适用于节点', { reviewItemId: entry.reviewItemId });
+        }
+        const action = replacement();
+        if (!action || !('nodeType' in action) || action.operation !== 'create') {
+          invalid('supersede 裁决必须提供替代新节点（create）', {
+            reviewItemId: entry.reviewItemId,
+          });
+        }
+        const linked = entry.relationMigrationProposalRefs.some((ref) => {
+          const relation = relationActionByRef.get(ref);
+          return (
+            relation?.operation === 'create' &&
+            relation.relationType === 'supersedes' &&
+            relation.from.refKind === 'proposal' &&
+            relation.from.ref === entry.replacementProposalRef &&
+            relation.to.refKind === 'existing_revision' &&
+            relation.to.ref === item.entityRevisionId
+          );
+        });
+        if (!linked) {
+          invalid('supersede 必须提供新节点 supersedes 旧修订的关系（新 -> 旧）', {
+            reviewItemId: entry.reviewItemId,
+          });
+        }
+        return;
+      }
+      case 'unknown':
+        return;
+    }
+  }
+
+  /** 关系端点是否指向已被替代/移除的节点修订。 */
+  private relationEndpointsStale(revision: {
+    fromNodeRevisionId: string;
+    toNodeRevisionId: string;
+  }): boolean {
+    const project = this.db.repos.project.requireSingleton();
+    const working = this.currentWorkingSet(project);
+    const staleSide = (nodeRevisionId: string): boolean => {
+      const nodeRevision = this.db.repos.node.getRevisionById(nodeRevisionId);
+      if (!nodeRevision) return true;
+      const tip = working.nodeRevisionByNodeId.get(nodeRevision.nodeId);
+      return !tip || tip.id !== nodeRevisionId;
+    };
+    return staleSide(revision.fromNodeRevisionId) || staleSide(revision.toNodeRevisionId);
+  }
+
+  private failModelOutput(message: string, details: Record<string, unknown>): never {
+    throw new DomainError('MODEL_OUTPUT_INVALID', message, details);
+  }
 }
 
 class RunCancelledError extends Error {
@@ -576,6 +1027,44 @@ class RunCancelledError extends Error {
     super('run cancelled');
     this.name = 'RunCancelledError';
   }
+}
+
+// ---- Reevaluate 批次结果形状（schema 已在 provider 侧校验，这里只做语义引用检查）----
+
+interface BatchNodeAction {
+  proposalRef: string;
+  operation: 'create' | 'revise';
+  logicalNodeId: string | null;
+  nodeType: string;
+  epistemicState: string | null;
+}
+
+interface BatchRelationAction {
+  proposalRef: string;
+  operation: 'create' | 'revise';
+  logicalRelationId: string | null;
+  relationType: string;
+  from: { refKind: 'existing_revision' | 'proposal'; ref: string };
+  to: { refKind: 'existing_revision' | 'proposal'; ref: string };
+}
+
+interface BatchResultShape {
+  summary: string;
+  results: Array<{
+    reviewItemId: string;
+    verdict: 'valid' | 'revise' | 'refute' | 'supersede' | 'unknown';
+    rationale: string;
+    replacementProposalRef: string | null;
+    relationMigrationProposalRefs: string[];
+  }>;
+  nodeActions: BatchNodeAction[];
+  relationActions: BatchRelationAction[];
+  questionsForUser: Array<{ question: string; blocking: boolean; relatedProposalRefs: string[] }>;
+  stopReason: string;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 /** initialize：合并两步提案为单个 DesignProposal。 */

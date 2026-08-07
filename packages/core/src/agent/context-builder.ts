@@ -229,8 +229,7 @@ export function buildGrillContext(
   };
 }
 
-/** Unbox 上下文（§13.4）：roots、全部非 root 约束、顶层结构摘要、探索容器。 */
-export function buildUnboxContext(
+/** Unbox 上下文（§13.4）：roots、全部非 root 约束、顶层结构摘要、探索容器。 */ export function buildUnboxContext(
   ws: WorkingSet,
   container: { nodeId: string; revisionId: string },
   focusInstruction: string | null,
@@ -263,6 +262,31 @@ export function buildUnboxContext(
       roots,
       constraints,
       topLevel,
+    },
+  };
+}
+
+/** 单个 review item 的不可信视图（由调用方从数据库组装，含被替代修订的内容）。 */
+export interface ReevaluationItemView {
+  reviewItemId: string;
+  entityKind: string;
+  reasonCode: string;
+  /** node item：节点修订内容；relation item：关系修订内容与端点标题。 */
+  entity: Record<string, unknown> | null;
+}
+
+/** Reevaluate 批次上下文（§13.5）：批次 item 全量内容 + roots 定向。 */
+export function buildReevaluationContext(
+  changeSetId: string,
+  roots: UntrustedNodeView[],
+  items: ReevaluationItemView[],
+): Record<string, unknown> {
+  return {
+    task: 'reevaluate',
+    data: {
+      changeSetId,
+      roots,
+      items,
     },
   };
 }

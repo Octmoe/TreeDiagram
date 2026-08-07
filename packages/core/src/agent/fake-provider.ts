@@ -115,9 +115,31 @@ function defaultFakeValue(schemaName: string, input: string): unknown {
     };
   }
   if (schemaName === 'ReevaluationBatchResult') {
-    throw modelError('MODEL_PROVIDER_FAILED', 'Reevaluation 默认 fake 响应在 M5 提供', {
-      retryable: false,
-    });
+    // 开发默认：对上下文中的每个批次 item 一律 valid 裁决
+    const parsed = JSON.parse(input) as {
+      data?: { items?: Array<{ reviewItemId: string }> };
+    };
+    const items = parsed.data?.items ?? [];
+    if (items.length === 0) {
+      throw modelError('MODEL_PROVIDER_FAILED', 'fake reevaluate 上下文缺少批次 items', {
+        retryable: false,
+      });
+    }
+    return {
+      schemaVersion: 1,
+      summary: 'fake provider：全部 item 裁决 valid',
+      results: items.map((item) => ({
+        reviewItemId: item.reviewItemId,
+        verdict: 'valid',
+        rationale: 'FakeModelProvider 默认复核通过',
+        replacementProposalRef: null,
+        relationMigrationProposalRefs: [],
+      })),
+      nodeActions: [],
+      relationActions: [],
+      questionsForUser: [],
+      stopReason: 'completed',
+    };
   }
   throw modelError('MODEL_PROVIDER_FAILED', `未知 fake schema: ${schemaName}`, {
     retryable: false,

@@ -135,6 +135,7 @@ const start = (workflowType: StartWorkflowRequest['workflowType'], targetNodeId:
   ({
     workflowType,
     targetNodeId: asId(targetNodeId ?? crypto.randomUUID()),
+    changeSetId: null,
     sourceAssetIds: [],
     focusInstruction: null,
   }) as StartWorkflowRequest;
@@ -240,6 +241,7 @@ describe('M4 unbox 工作流（§13.4）', () => {
     const run = runner.start(freshProject(ws), {
       workflowType: 'unbox',
       targetNodeId: null,
+      changeSetId: null,
       sourceAssetIds: [],
       focusInstruction: '如果没有单机约束会怎样',
     });
@@ -283,6 +285,7 @@ describe('M4 unbox 工作流（§13.4）', () => {
       runner.start(freshProject(ws), {
         workflowType: 'unbox',
         targetNodeId: null,
+        changeSetId: null,
         sourceAssetIds: [],
         focusInstruction: null,
       });

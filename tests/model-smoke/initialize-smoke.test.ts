@@ -33,6 +33,7 @@ describe.skipIf(!apiKey)('OpenAI 真实调用冒烟（§16.4）', () => {
     const run = runner.start(freshProject(ws), {
       workflowType: 'initialize',
       targetNodeId: null,
+      changeSetId: null,
       sourceAssetIds: [source.id],
       focusInstruction: null,
     });

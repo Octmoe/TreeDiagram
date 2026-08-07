@@ -87,6 +87,7 @@ function setConsistent(ws: TestWorkspace): void {
 const deriveRequest = (targetNodeId: string): StartWorkflowRequest => ({
   workflowType: 'derive',
   targetNodeId: asId(targetNodeId),
+  changeSetId: null,
   sourceAssetIds: [],
   focusInstruction: null,
 });
@@ -123,6 +124,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
     const run = runner.start(freshProject(ws), {
       workflowType: 'initialize',
       targetNodeId: null,
+      changeSetId: null,
       sourceAssetIds: [source.id],
       focusInstruction: null,
     });
@@ -344,6 +346,7 @@ describe('M3 可用性规则（§13）', () => {
       runner.start(freshProject(ws), {
         workflowType: 'initialize',
         targetNodeId: null,
+        changeSetId: null,
         sourceAssetIds: [],
         focusInstruction: null,
       }),
@@ -371,6 +374,7 @@ describe('M3 可用性规则（§13）', () => {
       runner.start(freshProject(ws), {
         workflowType: 'reevaluate',
         targetNodeId: null,
+        changeSetId: null,
         sourceAssetIds: [],
         focusInstruction: null,
       });

@@ -197,13 +197,16 @@ export class WorkflowRunRepository {
     return rows.map(mapWorkflowRunRow);
   }
 
-  hasActiveRun(projectId: ProjectId): boolean {
+  hasActiveRun(projectId: ProjectId, excludeRunId?: string): boolean {
     // waiting_user 是暂停等待用户的活跃态（API_CONTRACT：running/paused 时 409）。
     const row = this.db
       .prepare(
-        "SELECT 1 AS x FROM workflow_run WHERE project_id = ? AND status IN ('queued','running','waiting_user') LIMIT 1",
+        `SELECT 1 AS x FROM workflow_run
+         WHERE project_id = ? AND status IN ('queued','running','waiting_user')
+           AND (? IS NULL OR id <> ?)
+         LIMIT 1`,
       )
-      .get(projectId);
+      .get(projectId, excludeRunId ?? null, excludeRunId ?? null);
     return row !== undefined;
   }
 }
