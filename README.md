@@ -11,6 +11,7 @@ TreeDiagram 是一个面向独立创作者的设计 Agent Harness。它以“树
 - [详细实现设计](./IMPLEMENTATION_DESIGN.md)：固定技术栈、目录、数据库、领域服务、API、Agent、UI 与测试契约。
 - [HTTP API 精确契约](./docs/API_CONTRACT.md)：逐路由权限、请求、响应、分页、错误与事件载荷。
 - [M1–M5 总体计划](./IMPLEMENTATION_PLAN.md)：里程碑依赖、交付边界和完成定义。
+- [使用手册](./MANUAL.md)：概念速览、五个工作流用法、发布生命周期、AI 托管与下游集成。
 
 ## 环境要求
 
