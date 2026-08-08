@@ -398,6 +398,56 @@ button.danger {
   overflow: auto;
 }
 
+.workflow-conversation {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+
+.workflow-message {
+  max-width: 88%;
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  background: Canvas;
+  border: 1px solid var(--border);
+}
+
+.workflow-message.role-user {
+  justify-self: end;
+  background: color-mix(in srgb, var(--accent) 12%, Canvas);
+}
+
+.workflow-message > header {
+  margin-bottom: 0.35rem;
+  opacity: 0.72;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.workflow-message p,
+.workflow-message ol {
+  margin: 0.25rem 0;
+  white-space: pre-wrap;
+}
+
+.workflow-message li .badge {
+  margin-left: 0.45rem;
+}
+
+.workflow-reply {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.workflow-reply textarea {
+  width: 100%;
+  resize: vertical;
+}
+
 .run-heading,
 .model-call-log {
   width: 100%;

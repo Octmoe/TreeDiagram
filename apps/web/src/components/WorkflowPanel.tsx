@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SourceAsset, WorkflowRun, WorkflowType } from '@treediagram/contracts';
+import type {
+  SourceAsset,
+  WorkflowConversation,
+  WorkflowRun,
+  WorkflowType,
+} from '@treediagram/contracts';
 import { ApiError } from '../api/client';
 import { useApp } from '../state/app';
 
@@ -112,20 +117,40 @@ export function WorkflowPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [conversationRunId, setConversationRunId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Record<string, WorkflowConversation>>({});
+  const [replyByRun, setReplyByRun] = useState<Record<string, string>>({});
+  const [replyingRunId, setReplyingRunId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadConversation = useCallback(
+    async (runId: string) => {
+      if (!api) return;
+      const conversation = await api.get<WorkflowConversation>(`/workflows/${runId}/messages`);
+      setConversations((current) => ({ ...current, [runId]: conversation }));
+    },
+    [api],
+  );
 
   const load = useCallback(async () => {
     if (!api) return;
     try {
       const res = await api.get<WorkflowListResponse>('/workflows?limit=20');
       setRuns(res.runs);
+      const waitingRuns = res.runs.filter((run) => run.status === 'waiting_user');
+      if (waitingRuns[0]) {
+        setConversationRunId((current) => current ?? waitingRuns[0]!.id);
+      }
+      await Promise.all(
+        waitingRuns.map((run) => loadConversation(run.id)),
+      );
       const active = res.runs.some((r) => ['queued', 'running', 'waiting_user'].includes(r.status));
       dispatch({ type: 'workflow-active', active });
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
     }
-  }, [api, dispatch]);
+  }, [api, dispatch, loadConversation]);
 
   useEffect(() => {
     void load();
@@ -226,6 +251,54 @@ export function WorkflowPanel() {
     }
   };
 
+  const retry = async (runId: string) => {
+    if (!api) return;
+    try {
+      await api.post(`/workflows/${runId}/retry`);
+      await load();
+      refresh();
+    } catch (err) {
+      reportError(err, '无法重试工作流');
+    }
+  };
+
+  const toggleConversation = async (runId: string) => {
+    if (conversationRunId === runId) {
+      setConversationRunId(null);
+      return;
+    }
+    try {
+      await loadConversation(runId);
+      setConversationRunId(runId);
+    } catch (err) {
+      reportError(err, '无法读取工作流对话');
+    }
+  };
+
+  const respond = async (runId: string) => {
+    if (!api) return;
+    const conversation = conversations[runId];
+    const message = (replyByRun[runId] ?? '').trim();
+    if (!conversation?.openWait || !message) return;
+    setReplyingRunId(runId);
+    try {
+      await api.post(`/workflows/${runId}/respond`, {
+        waitId: conversation.openWait.id,
+        clientMessageId: crypto.randomUUID(),
+        message,
+        answers: [],
+        sourceAssetIds: [],
+      });
+      setReplyByRun((current) => ({ ...current, [runId]: '' }));
+      await Promise.all([load(), loadConversation(runId)]);
+      refresh();
+    } catch (err) {
+      reportError(err, '无法提交回答');
+    } finally {
+      setReplyingRunId(null);
+    }
+  };
+
   /** 失败 run 的 error 详情弹窗（run.error 为服务端序列化的 DomainError）。 */
   const showRunError = (run: WorkflowRun) => {
     const raw = (run.error ?? {}) as Record<string, unknown>;
@@ -315,6 +388,8 @@ export function WorkflowPanel() {
         {runs.map((run) => {
           const modelCalls = modelCallsOf(run);
           const expanded = expandedRunId === run.id;
+          const conversationExpanded = conversationRunId === run.id;
+          const conversation = conversations[run.id];
           return (
             <li key={run.id} className={`run status-${run.status}`}>
               <div className="run-heading">
@@ -332,6 +407,18 @@ export function WorkflowPanel() {
                   查看错误详情
                 </button>
               ) : null}
+              {run.status === 'failed' ? (
+                <button className="secondary" onClick={() => void retry(run.id)}>
+                  重试失败阶段
+                </button>
+              ) : null}
+              <button
+                className="secondary"
+                aria-expanded={conversationExpanded}
+                onClick={() => void toggleConversation(run.id)}
+              >
+                {conversationExpanded ? '收起对话' : '查看对话'}
+              </button>
               {isActive(run) ? (
                 <button className="danger" onClick={() => void cancel(run.id)}>
                   取消（不回滚已写入提案）
@@ -378,6 +465,56 @@ export function WorkflowPanel() {
                       </article>
                     ))
                   )}
+                </div>
+              ) : null}
+              {conversationExpanded ? (
+                <div className="workflow-conversation" aria-label="工作流对话">
+                  {conversation?.messages.length ? (
+                    conversation.messages.map((message) => (
+                      <article
+                        key={message.id}
+                        className={`workflow-message role-${message.role}`}
+                      >
+                        <header>{message.role === 'agent' ? 'Agent' : message.role === 'user' ? '你' : '系统'}</header>
+                        {message.contentText ? <p>{message.contentText}</p> : null}
+                        {message.questions.length > 0 ? (
+                          <ol>
+                            {message.questions.map((question) => (
+                              <li key={question.id}>
+                                {question.question}
+                                {question.blocking ? <span className="badge">需要回答</span> : null}
+                              </li>
+                            ))}
+                          </ol>
+                        ) : null}
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty">此运行尚无对话消息。</p>
+                  )}
+                  {run.status === 'waiting_user' && conversation?.openWait ? (
+                    <div className="workflow-reply">
+                      <label htmlFor={`workflow-reply-${run.id}`}>回复 Agent</label>
+                      <textarea
+                        id={`workflow-reply-${run.id}`}
+                        value={replyByRun[run.id] ?? ''}
+                        onChange={(event) =>
+                          setReplyByRun((current) => ({
+                            ...current,
+                            [run.id]: event.target.value,
+                          }))
+                        }
+                        placeholder="补充目标、边界、约束，也可以反问 Agent 要求解释。"
+                        rows={4}
+                      />
+                      <button
+                        disabled={replyingRunId === run.id || !(replyByRun[run.id] ?? '').trim()}
+                        onClick={() => void respond(run.id)}
+                      >
+                        {replyingRunId === run.id ? '正在提交…' : '提交并继续'}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {run.summary ? (

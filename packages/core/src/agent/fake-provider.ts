@@ -94,6 +94,27 @@ function defaultFakeValue(schemaName: string, input: string): unknown {
         : 'initialize';
     const priorNodeRefs = readPriorNodeRefs(context.data);
     const isInitializeRoot = workflowType === 'initialize' && priorNodeRefs.length > 0;
+    const shouldClarify =
+      context.data['focusInstruction'] === '__fake_clarify__' &&
+      !hasUserConversationMessage(context.data);
+    if (shouldClarify) {
+      return {
+        schemaVersion: 1,
+        workflowType,
+        summary: 'FakeModelProvider 请求用户澄清，用于离线验证多轮对话。',
+        nodeActions: [],
+        relationActions: [],
+        questionsForUser: [
+          {
+            question: '请确认这个分支期望解决的具体问题。',
+            blocking: true,
+            relatedProposalRefs: [],
+          },
+        ],
+        warnings: [],
+        stopReason: 'needs_user',
+      };
+    }
     const nodeRef = isInitializeRoot ? 'root1' : 'n1';
     const relationActions: unknown[] = [];
     if (isInitializeRoot) {
@@ -216,6 +237,20 @@ function readRevisionId(data: Record<string, unknown>, key: string): string | nu
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const revisionId = (value as Record<string, unknown>)['revisionId'];
   return typeof revisionId === 'string' && revisionId.length > 0 ? revisionId : null;
+}
+
+function hasUserConversationMessage(data: Record<string, unknown>): boolean {
+  const conversation = data['workflowConversation'];
+  return (
+    Array.isArray(conversation) &&
+    conversation.some(
+      (message) =>
+        message !== null &&
+        typeof message === 'object' &&
+        !Array.isArray(message) &&
+        (message as Record<string, unknown>)['role'] === 'user',
+    )
+  );
 }
 
 function fakeContainsAction(ref: string, from: unknown, to: unknown): unknown {
