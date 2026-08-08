@@ -408,6 +408,53 @@ button.danger {
   background: var(--bg-panel);
 }
 
+.workflow-issues {
+  display: grid;
+  gap: 0.55rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.workflow-issues > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.workflow-issue {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--warning);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: Canvas;
+}
+
+.workflow-issue.status-resolved,
+.workflow-issue.status-superseded {
+  opacity: 0.66;
+  border-color: var(--border);
+}
+
+.workflow-issue .badge + .badge {
+  margin-left: 0.35rem;
+}
+
+.workflow-issue p,
+.workflow-approval-hint {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.workflow-approval-hint {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 12%, Canvas);
+}
+
 .workflow-message {
   max-width: 88%;
   padding: 0.65rem 0.8rem;

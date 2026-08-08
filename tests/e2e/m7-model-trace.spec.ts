@@ -23,14 +23,20 @@ test('Derive 完成后可查看经过筛选的模型请求与响应记录', asyn
 
   const run = page.locator('.run-list .run').first();
   await expect(run).toContainText('succeeded', { timeout: 30_000 });
-  await run.getByRole('button', { name: '查看模型记录（1）' }).click();
+  await run.getByRole('button', { name: '查看模型记录（2）' }).click();
 
   const log = run.getByLabel('模型调用记录');
-  await expect(log).toContainText('derive');
+  await expect(log).toContainText('derive 就绪评估');
   await expect(log).toContainText('succeeded');
   await expect(log).toContainText('不包含模型内部思维链');
-  await log.getByText(/发送的上下文（已过滤）/).click();
+  await log
+    .getByText(/发送的上下文（已过滤）/)
+    .last()
+    .click();
   await expect(log).toContainText('为 AI Agent 提供可靠的程序化建模工具集');
-  await log.getByText(/模型最终结构化响应/).click();
+  await log
+    .getByText(/模型最终结构化响应/)
+    .last()
+    .click();
   await expect(log).toContainText('proposalRef');
 });

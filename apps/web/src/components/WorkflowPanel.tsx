@@ -83,11 +83,43 @@ function modelCallsOf(run: WorkflowRun): ModelCallTrace[] {
 function stageLabel(stage: string): string {
   if (stage === 'initialize_extract') return 'Initialize ① 提取候选';
   if (stage === 'initialize_root') return 'Initialize ② 生成根节点';
+  if (stage === 'initialize_project') return 'Initialize 完整项目投影';
+  if (stage.endsWith('_readiness')) {
+    return `${stage.slice(0, -'_readiness'.length)} 就绪评估`;
+  }
+  const repair = stage.match(/^(.*)_repair_(\d+)$/);
+  if (repair) return `${repair[1]} 自动修复 ${repair[2]}`;
   if (stage.startsWith('reevaluate_batch_')) {
     return `Re-evaluate 批次 ${stage.slice('reevaluate_batch_'.length)}`;
   }
   return stage;
 }
+
+function runStatusLabel(run: WorkflowRun): string {
+  if (run.status !== 'waiting_user') return run.status;
+  return run.currentStep === 'waiting_approval' ? '等待审批' : '等待回答';
+}
+
+const ISSUE_KIND_LABELS = {
+  ambiguity: '歧义',
+  decision: '待决策',
+  approval: '待审批',
+  inconsistency: '不一致',
+  external_dependency: '外部依赖',
+} as const;
+
+const ISSUE_GATE_LABELS = {
+  before_proposal: '提案前',
+  before_apply: '写入前',
+  before_release: '完成前',
+} as const;
+
+const ISSUE_STATUS_LABELS = {
+  open: '待处理',
+  answered: '已回答',
+  resolved: '已解决',
+  superseded: '已替代',
+} as const;
 
 function elapsedLabel(call: ModelCallTrace): string {
   const start = Date.parse(call.startedAt);
@@ -121,6 +153,7 @@ export function WorkflowPanel() {
   const [conversations, setConversations] = useState<Record<string, WorkflowConversation>>({});
   const [replyByRun, setReplyByRun] = useState<Record<string, string>>({});
   const [replyingRunId, setReplyingRunId] = useState<string | null>(null);
+  const [resumingRunId, setResumingRunId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadConversation = useCallback(
@@ -297,6 +330,20 @@ export function WorkflowPanel() {
     }
   };
 
+  const resumeApproval = async (runId: string) => {
+    if (!api) return;
+    setResumingRunId(runId);
+    try {
+      await api.post(`/workflows/${runId}/resume`);
+      await Promise.all([load(), loadConversation(runId)]);
+      refresh();
+    } catch (err) {
+      reportError(err, '无法重新检查审批状态');
+    } finally {
+      setResumingRunId(null);
+    }
+  };
+
   /** 失败 run 的 error 详情弹窗（run.error 为服务端序列化的 DomainError）。 */
   const showRunError = (run: WorkflowRun) => {
     const raw = (run.error ?? {}) as Record<string, unknown>;
@@ -388,10 +435,13 @@ export function WorkflowPanel() {
           const expanded = expandedRunId === run.id;
           const conversationExpanded = conversationRunId === run.id;
           const conversation = conversations[run.id];
+          const awaitingApproval =
+            run.status === 'waiting_user' && run.currentStep === 'waiting_approval';
           return (
             <li key={run.id} className={`run status-${run.status}`}>
               <div className="run-heading">
-                <strong>{run.workflowType}</strong> · {run.status} · 步骤：{run.currentStep}
+                <strong>{run.workflowType}</strong> · {runStatusLabel(run)} · 步骤：
+                {run.currentStep}
               </div>
               <button
                 className="secondary"
@@ -417,6 +467,15 @@ export function WorkflowPanel() {
               >
                 {conversationExpanded ? '收起对话' : '查看对话'}
               </button>
+              {awaitingApproval ? (
+                <button
+                  className="secondary"
+                  disabled={resumingRunId === run.id}
+                  onClick={() => void resumeApproval(run.id)}
+                >
+                  {resumingRunId === run.id ? '正在重新检查…' : '已完成根节点确认，重新检查并完成'}
+                </button>
+              ) : null}
               {isActive(run) ? (
                 <button className="danger" onClick={() => void cancel(run.id)}>
                   取消（不回滚已写入提案）
@@ -467,6 +526,31 @@ export function WorkflowPanel() {
               ) : null}
               {conversationExpanded ? (
                 <div className="workflow-conversation" aria-label="工作流对话">
+                  {conversation?.issues.length ? (
+                    <section className="workflow-issues" aria-label="工作流待办事项">
+                      <header>
+                        <strong>语义待办</strong>
+                        <span className="muted">由 Agent 的判断门记录，不等同于运行错误</span>
+                      </header>
+                      {conversation.issues.map((issue) => (
+                        <article key={issue.id} className={`workflow-issue status-${issue.status}`}>
+                          <div>
+                            <span className="badge">{ISSUE_KIND_LABELS[issue.kind]}</span>
+                            <span className="badge">{ISSUE_GATE_LABELS[issue.gate]}</span>
+                            <span className="badge">{ISSUE_STATUS_LABELS[issue.status]}</span>
+                          </div>
+                          <strong>{issue.questionText}</strong>
+                          {issue.rationaleText ? <p>{issue.rationaleText}</p> : null}
+                        </article>
+                      ))}
+                      {awaitingApproval ? (
+                        <p className="workflow-approval-hint">
+                          请在画布中选择根节点，将审批状态改为 user_confirmed
+                          并保存，然后点击上方“重新检查并完成”。
+                        </p>
+                      ) : null}
+                    </section>
+                  ) : null}
                   {conversation?.messages.length ? (
                     conversation.messages.map((message) => (
                       <article key={message.id} className={`workflow-message role-${message.role}`}>
