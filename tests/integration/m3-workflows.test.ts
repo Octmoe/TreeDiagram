@@ -228,6 +228,12 @@ describe('M3 initialize 工作流（§13.1）', () => {
     expect(() =>
       runner.respond(freshProject(ws), run.id, {
         ...response,
+        message: '复用幂等键但篡改正文',
+      }),
+    ).toThrowError(/clientMessageId/);
+    expect(() =>
+      runner.respond(freshProject(ws), run.id, {
+        ...response,
         clientMessageId: asId(randomUUID()),
       }),
     ).toThrowError(/不接受用户回答/);

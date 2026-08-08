@@ -385,7 +385,21 @@ export class CoreWorkflowRunner {
       runId,
       input.clientMessageId,
     );
-    if (existing) return this.requireRun(project, runId);
+    if (existing) {
+      const requestedWait = this.db.repos.workflowInteraction.getWait(input.waitId);
+      const exactRetry =
+        requestedWait?.workflowRunId === runId &&
+        existing.replyToMessageId === requestedWait.messageId &&
+        existing.contentText === input.message &&
+        JSON.stringify(existing.answers) === JSON.stringify(input.answers) &&
+        JSON.stringify(existing.sourceAssetIds) === JSON.stringify(input.sourceAssetIds);
+      if (!exactRetry) {
+        throw new DomainError('VALIDATION_FAILED', 'clientMessageId 已用于不同的工作流回答', {
+          clientMessageId: input.clientMessageId,
+        });
+      }
+      return this.requireRun(project, runId);
+    }
 
     const run = this.requireRun(project, runId);
     if (run.status !== 'waiting_user') {
