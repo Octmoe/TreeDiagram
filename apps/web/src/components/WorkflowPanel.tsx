@@ -141,9 +141,7 @@ export function WorkflowPanel() {
       if (waitingRuns[0]) {
         setConversationRunId((current) => current ?? waitingRuns[0]!.id);
       }
-      await Promise.all(
-        waitingRuns.map((run) => loadConversation(run.id)),
-      );
+      await Promise.all(waitingRuns.map((run) => loadConversation(run.id)));
       const active = res.runs.some((r) => ['queued', 'running', 'waiting_user'].includes(r.status));
       dispatch({ type: 'workflow-active', active });
       setError(null);
@@ -471,11 +469,14 @@ export function WorkflowPanel() {
                 <div className="workflow-conversation" aria-label="工作流对话">
                   {conversation?.messages.length ? (
                     conversation.messages.map((message) => (
-                      <article
-                        key={message.id}
-                        className={`workflow-message role-${message.role}`}
-                      >
-                        <header>{message.role === 'agent' ? 'Agent' : message.role === 'user' ? '你' : '系统'}</header>
+                      <article key={message.id} className={`workflow-message role-${message.role}`}>
+                        <header>
+                          {message.role === 'agent'
+                            ? 'Agent'
+                            : message.role === 'user'
+                              ? '你'
+                              : '系统'}
+                        </header>
                         {message.contentText ? <p>{message.contentText}</p> : null}
                         {message.questions.length > 0 ? (
                           <ol>

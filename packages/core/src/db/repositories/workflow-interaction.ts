@@ -106,7 +106,9 @@ export class WorkflowInteractionRepository {
   getByClientMessageId(runId: string, clientMessageId: string): WorkflowMessage | null {
     const row = optionalRow<WorkflowMessageRow>(
       this.db
-        .prepare('SELECT * FROM workflow_message WHERE workflow_run_id = ? AND client_message_id = ?')
+        .prepare(
+          'SELECT * FROM workflow_message WHERE workflow_run_id = ? AND client_message_id = ?',
+        )
         .get(runId, clientMessageId),
     );
     return row ? mapMessage(row) : null;

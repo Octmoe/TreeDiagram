@@ -56,12 +56,7 @@ function containsAction() {
   };
 }
 
-async function waitForStatus(
-  app: AppInstance,
-  token: string,
-  runId: string,
-  expected: string,
-) {
+async function waitForStatus(app: AppInstance, token: string, runId: string, expected: string) {
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const response = await app.inject({
       method: 'GET',
