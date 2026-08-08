@@ -8,6 +8,7 @@ import {
   INITIALIZE_INSTRUCTIONS,
   modelError,
   type ModelProvider,
+  type StructuredGenerationRequest,
   userAuthor,
 } from '@treediagram/core';
 import {
@@ -425,7 +426,7 @@ describe('M3 derive 工作流（§13.2）', () => {
     });
     const provider: ModelProvider = {
       providerName: 'trace-test',
-      async generateStructured<T>(request) {
+      async generateStructured<T>(request: StructuredGenerationRequest) {
         if (request.outputSchemaName === 'WorkflowReadiness') {
           return {
             value: readyAssessment('derive') as T,

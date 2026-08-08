@@ -37,7 +37,7 @@ describe.skipIf(!apiKey)('OpenAI 真实调用冒烟（§16.4）', () => {
       sourceAssetIds: [source.id],
       focusInstruction: null,
     });
-    // initialize 为两次串行生成（extract + root），思考档模型单次可达 1-3 分钟
+    // initialize 为 readiness + 单次完整项目投影；必要时还会触发自动修复回合。
     const final = await runner.waitForCompletion(run.id, 280_000);
 
     // 真实模型输出不可预测内容，但必须通过完整状态机

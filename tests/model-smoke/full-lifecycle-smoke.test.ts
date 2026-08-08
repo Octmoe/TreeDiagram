@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { asId, type StartWorkflowRequest, type WorkflowRun } from '@treediagram/contracts';
 import { CoreWorkflowRunner, OpenAIProvider, userAuthor } from '@treediagram/core';
@@ -10,7 +11,7 @@ import {
 
 /**
  * 真实模型完整生命周期冒烟：
- * Release 1 基线 → Derive(waiting_user/resume) → Grill → Unbox → Adopt →
+ * Release 1 基线 → Derive(waiting_user/respond) → Grill → Unbox → Adopt →
  * Re-evaluate → Release 2；另验证真实在途请求 cancel。
  *
  * 内容断言只检查协议与领域结果，不绑定模型措辞，降低随机输出导致的脆弱性。
@@ -93,15 +94,25 @@ async function finishRun(
 ): Promise<WorkflowRun> {
   let final = await runner.waitForCompletion(run.id, RUN_TIMEOUT_MS);
   expect(final.error, JSON.stringify(final.error)).toBeNull();
-  if (final.status === 'waiting_user') {
-    final = runner.resume(freshProject(ws), run.id);
+  for (let attempt = 0; final.status === 'waiting_user' && attempt < 3; attempt += 1) {
+    const wait = ws.db.repos.workflowInteraction.getOpenWait(run.id);
+    final = wait
+      ? runner.respond(freshProject(ws), run.id, {
+          waitId: wait.id,
+          clientMessageId: asId(randomUUID()),
+          message: '按当前焦点继续，采用最小、tentative 且不越界的候选。',
+          answers: [],
+          sourceAssetIds: [],
+        })
+      : runner.resume(freshProject(ws), run.id);
+    final = await runner.waitForCompletion(run.id, RUN_TIMEOUT_MS);
   }
   expect(final.status, JSON.stringify(final.error)).toBe('succeeded');
   return final;
 }
 
 describe.skipIf(!apiKey)('真实模型全功能生命周期', () => {
-  it('Derive waiting/resume → Grill → Unbox → Adopt → Re-evaluate → Publish', async () => {
+  it('Derive waiting/respond → Grill → Unbox → Adopt → Re-evaluate → Publish', async () => {
     const ws = makeTestWorkspace('real-model-full-lifecycle');
     const { root, target, release: release1 } = publishBaseline(ws);
     const runner = makeRunner(ws);
@@ -117,7 +128,15 @@ describe.skipIf(!apiKey)('真实模型全功能生命周期', () => {
     const deriveWaiting = await runner.waitForCompletion(derive.id, RUN_TIMEOUT_MS);
     expect(deriveWaiting.error, JSON.stringify(deriveWaiting.error)).toBeNull();
     expect(deriveWaiting.status).toBe('waiting_user');
-    const deriveFinal = runner.resume(freshProject(ws), derive.id);
+    const deriveWait = ws.db.repos.workflowInteraction.getOpenWait(derive.id)!;
+    runner.respond(freshProject(ws), derive.id, {
+      waitId: deriveWait.id,
+      clientMessageId: asId(randomUUID()),
+      message: '继续，但 Question 保持非阻塞，且不要创建重要 Decision。',
+      answers: [],
+      sourceAssetIds: [],
+    });
+    const deriveFinal = await finishRun(runner, ws, derive);
     expect(deriveFinal.status).toBe('succeeded');
 
     const grill = runner.start(

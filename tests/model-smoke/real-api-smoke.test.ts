@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +8,7 @@ import type {
   ChangeSet,
   CheckConsistencyResponse,
   ReviewItemsResponse,
+  WorkflowConversation,
   WorkflowRun,
 } from '@treediagram/contracts';
 import { WorkspaceService, systemClock } from '@treediagram/core';
@@ -100,13 +102,33 @@ describe.skipIf(!apiKey)('真实模型 HTTP API 闭环', () => {
       let run = (startedResponse.json() as Envelope<WorkflowRun>).data;
       run = await waitForRun(app, adminToken, run.id);
       expect(run.error, JSON.stringify(run.error)).toBeNull();
-      if (run.status === 'waiting_user') {
-        const resumed = await app.inject({
-          method: 'POST',
-          url: `/api/v1/workflows/${run.id}/resume`,
+      for (let attempt = 0; run.status === 'waiting_user' && attempt < 3; attempt += 1) {
+        const conversationResponse = await app.inject({
+          method: 'GET',
+          url: `/api/v1/workflows/${run.id}/messages`,
           headers: auth(adminToken),
         });
-        expect(resumed.statusCode, resumed.body).toBe(202);
+        expect(conversationResponse.statusCode, conversationResponse.body).toBe(200);
+        const conversation = (conversationResponse.json() as Envelope<WorkflowConversation>).data;
+        const continued = conversation.openWait
+          ? await app.inject({
+              method: 'POST',
+              url: `/api/v1/workflows/${run.id}/respond`,
+              headers: auth(adminToken),
+              payload: {
+                waitId: conversation.openWait.id,
+                clientMessageId: randomUUID(),
+                message: '按焦点指令继续；保持最小、tentative、仅 contains 的本地候选。',
+                answers: [],
+                sourceAssetIds: [],
+              },
+            })
+          : await app.inject({
+              method: 'POST',
+              url: `/api/v1/workflows/${run.id}/resume`,
+              headers: auth(adminToken),
+            });
+        expect(continued.statusCode, continued.body).toBe(202);
         run = await waitForRun(app, adminToken, run.id);
       }
       expect(run.status, JSON.stringify(run.error)).toBe('succeeded');
