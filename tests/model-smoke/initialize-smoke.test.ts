@@ -24,7 +24,7 @@ describe.skipIf(!apiKey)('OpenAI 真实调用冒烟（§16.4）', () => {
       },
       userAuthor,
     );
-    const provider = new OpenAIProvider(apiKey!, 120_000);
+    const provider = new OpenAIProvider(apiKey!, 300_000);
     const runner = new CoreWorkflowRunner(ws.ctx, {
       provider,
       model,
@@ -37,10 +37,13 @@ describe.skipIf(!apiKey)('OpenAI 真实调用冒烟（§16.4）', () => {
       sourceAssetIds: [source.id],
       focusInstruction: null,
     });
-    const final = await runner.waitForCompletion(run.id, 180_000);
+    // initialize 为两次串行生成（extract + root），思考档模型单次可达 1-3 分钟
+    const final = await runner.waitForCompletion(run.id, 280_000);
 
     // 真实模型输出不可预测内容，但必须通过完整状态机
-    expect(['succeeded', 'waiting_user']).toContain(final.status);
+    expect(['succeeded', 'waiting_user'], JSON.stringify(final.error, null, 2)).toContain(
+      final.status,
+    );
     expect(final.error).toBeNull();
     expect(final.providerResponseId).toBeTruthy();
     const nodes = ws.db.repos.node.listNodesByProject(ws.project.id);
@@ -54,5 +57,5 @@ describe.skipIf(!apiKey)('OpenAI 真实调用冒烟（§16.4）', () => {
         );
       }
     }
-  }, 240_000);
+  }, 290_000);
 });

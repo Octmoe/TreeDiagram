@@ -50,8 +50,12 @@ export default async function globalSetup(): Promise<void> {
   }
 
   const serverEntry = fileURLToPath(new URL('../../apps/server/dist/index.js', import.meta.url));
+  // 常规 E2E 用确定性 fake 验证 Agent UI；显式配置真实模型时保持真实 provider。
+  const providerEnv = process.env['OPENAI_API_KEY']
+    ? {}
+    : { TREEDIAGRAM_MODEL_PROVIDER: process.env['TREEDIAGRAM_MODEL_PROVIDER'] ?? 'fake' };
   const child = spawn(process.execPath, [serverEntry, '--workspace', dir], {
-    env: { ...process.env, TREEDIAGRAM_PORT: '4317', LOG_LEVEL: 'error' },
+    env: { ...process.env, ...providerEnv, TREEDIAGRAM_PORT: '4317', LOG_LEVEL: 'error' },
     stdio: 'ignore',
   });
   if (!child.pid) throw new Error('server 进程启动失败');

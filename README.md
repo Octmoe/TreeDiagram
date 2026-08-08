@@ -110,6 +110,11 @@ Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
 状态的 WorkflowRun 在启动时被标记 `failed(PROCESS_INTERRUPTED)`，可通过
 `POST /api/v1/workflows/:id/resume` 从本地 checkpoint 幂等续跑（不依赖供应商会话）。
 
+Workflow 面板可展开“模型记录”：请求发出前即写入当前阶段（Initialize 会区分“提取候选”与
+“生成根节点”）、开始时间、模型与推理档位，完成后补充最终结构化响应、responseId 和 token
+用量。记录只对 admin 开放，密钥字段会脱敏，源码/上下文/响应会截断，不包含模型内部思维链。
+每次运行最多保留最近 50 条调用记录。
+
 ## 下游读取（consumer）
 
 下游系统使用 consumer token 做只读增量同步：
@@ -129,19 +134,22 @@ Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
 npm run format            # prettier
 npm run typecheck         # 全部 tsconfig 严格检查
 npm test                  # vitest：unit + integration（FakeModelProvider，确定性）
-npm run test:e2e          # Playwright 贯穿场景
-npm run test:model-smoke  # 真实 OpenAI 冒烟（需 OPENAI_API_KEY）
+npm run test:e2e          # Playwright 贯穿场景；有 OPENAI_API_KEY 时追加真实模型 UI 闭环
+npm run test:model-smoke  # 4 个真实 OpenAI 兼容端点测试（需 OPENAI_API_KEY）
 ```
 
 验收状态：
 
-- 单元 + 集成测试 113 个全部通过（FakeModelProvider 下所有工作流确定性通过）；
-- Playwright 贯穿场景（token gate → 编辑 → adopt → 复核 → publish）通过；
+- 单元 + 集成测试 155 个全部通过（110 个单元、45 个集成；FakeModelProvider 下所有工作流确定性通过）；
+- 6 个确定性 Playwright 场景通过；配置真实模型后，第 7 个场景会经浏览器和真实 server
+  调用模型并完成 Derive → Adopt → Review → Publish；
 - 贯穿验收（V1_SPEC §15 的 11 步 dogfooding 场景）由
   `tests/integration/m5-acceptance.test.ts` 全程通过 API 完成，无需直接编辑数据库；
 - 5,000 节点 / 20,000 关系规模测试、工作区重启恢复测试通过（`tests/integration/m1-kernel.test.ts`）；
-- 真实 OpenAI 冒烟：**因无 API key 未执行**（`describe.skipIf` 自动跳过；
-  设置 `OPENAI_API_KEY` 后运行 `npm run test:model-smoke` 即可执行）。
+- 4 个真实 OpenAI 兼容端点测试已通过：Initialize 两阶段生成、Core 全生命周期
+  （Derive 等待/恢复 → Grill → Unbox → Adopt → Re-evaluate → Publish）、HTTP API 闭环、
+  在途请求取消；未提供 `OPENAI_API_KEY` 时自动跳过，设置后运行
+  `npm run test:model-smoke` 即可复验。
 
 ## 仓库结构
 

@@ -4,6 +4,7 @@
   --bg-panel: #8881;
   --error: #c0392b;
   --warning: #b9770e;
+  --success: #2e8b57;
   --accent: #2e6bd8;
 }
 
@@ -395,6 +396,70 @@ button.danger {
   white-space: pre-wrap;
   max-height: 160px;
   overflow: auto;
+}
+
+.run-heading,
+.model-call-log {
+  width: 100%;
+}
+
+.model-call-log {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.model-call {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: 6px;
+  margin: 8px 0;
+  padding: 8px;
+}
+
+.model-call.status-running {
+  border-left-color: var(--warning);
+}
+
+.model-call.status-succeeded {
+  border-left-color: var(--success);
+}
+
+.model-call.status-failed,
+.model-call.status-cancelled {
+  border-left-color: var(--error);
+}
+
+.model-call > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.model-call-meta,
+.model-call-usage {
+  color: GrayText;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.model-call details {
+  margin-top: 6px;
+}
+
+.model-call summary {
+  cursor: pointer;
+}
+
+.model-call details pre {
+  border: 1px solid var(--border);
+  margin: 4px 0 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .tree-loading {

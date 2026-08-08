@@ -12,3 +12,5 @@ test-results/
 coverage/
 .DS_Store
 workspace/
+.tmp-probe/
+*.log

@@ -225,6 +225,12 @@ schema 名称均指 `packages/contracts/src/schemas/` 中的导出。响应均�
 | POST   | `/workflows/:id/cancel` | admin | —                            | `WorkflowRunSchema` (200)            |                                                           |
 | GET    | `/workflows`            | admin | `WorkflowListQuerySchema`    | `WorkflowRunSchema[]` + `nextCursor` | cursor 分页                                               |
 
+`WorkflowRun.checkpoint.modelCalls` 是管理员诊断轨迹：provider 请求发出前即追加 running
+记录，完成/失败/取消时原位补齐终态、最终结构化响应、responseId 与 usage。请求和响应只保存
+脱敏、限长预览；密钥字段不回显，长 `contentText` 单字段截断，且不包含 provider 内部 reasoning。
+它是工作区本地 checkpoint 数据，不写入 Pino 请求日志，也不向 consumer 开放。
+单个 WorkflowRun 最多保留最近 50 条模型调用轨迹。
+
 ### 6.8 下游 Release 与事件
 
 | Method | Path               | Scope | Query               | Response                       | 备注                                                 |

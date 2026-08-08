@@ -1241,7 +1241,7 @@ Tab：Overview、Relations、Evidence、History、Delegation。
 
 ### 14.5 Workflow Panel
 
-允许选择 workflow 和 target；显示当前步骤、结构化 summary、questionsForUser、warnings、提案数量。模型长时间等待时保持取消按钮。取消只停止后续步骤，不回滚已成功写入 ChangeSet 的提案。
+允许选择 workflow 和 target；显示当前步骤、结构化 summary、questionsForUser、warnings、提案数量。模型长时间等待时保持取消按钮，并允许管理员展开本地持久化的模型调用轨迹：阶段、已等待时间、脱敏/截断后的请求预览、最终结构化响应、responseId 与 token usage。Initialize 的 extract/root 两次调用分别展示。内部 reasoning 不展示。取消只停止后续步骤，不回滚已成功写入 ChangeSet 的提案。
 
 ## 15. 配置、日志与错误
 

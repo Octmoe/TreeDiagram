@@ -165,6 +165,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const schedule = () => {
       if (stopped || !api) return;
+      if (timer) clearTimeout(timer);
       const s = state.status?.status;
       const interval = state.activeWorkflow
         ? 1000
@@ -176,7 +177,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     void tick();
     const onVisibility = () => {
-      if (!document.hidden) void tick();
+      if (!document.hidden) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        void tick();
+      }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {

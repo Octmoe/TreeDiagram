@@ -16,6 +16,30 @@ interface WorkflowListResponse {
   nextCursor: string | null;
 }
 
+interface TracePreview {
+  text: string;
+  originalChars: number;
+  truncated: boolean;
+}
+
+interface ModelCallTrace {
+  id: string;
+  stage: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  provider: string;
+  model: string;
+  reasoningEffort: string;
+  maxOutputTokens: number | null;
+  outputSchemaName: string;
+  startedAt: string;
+  finishedAt: string | null;
+  request: { instructions: TracePreview; input: TracePreview };
+  response: TracePreview | null;
+  providerResponseId: string | null;
+  usage: Record<string, unknown> | null;
+  error: { code: string; message: string } | null;
+}
+
 const WORKFLOW_TYPES: WorkflowType[] = ['initialize', 'derive', 'grill', 'unbox', 'reevaluate'];
 
 /** 暂存的待上传文件；key 用于去重与移除。 */
@@ -39,6 +63,46 @@ function formatSize(bytes: number): string {
     : `${Math.ceil(bytes / 1024)} KiB`;
 }
 
+function modelCallsOf(run: WorkflowRun): ModelCallTrace[] {
+  const value = run.checkpoint['modelCalls'];
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is ModelCallTrace =>
+      Boolean(entry) &&
+      typeof entry === 'object' &&
+      typeof (entry as { id?: unknown }).id === 'string' &&
+      typeof (entry as { stage?: unknown }).stage === 'string',
+  );
+}
+
+function stageLabel(stage: string): string {
+  if (stage === 'initialize_extract') return 'Initialize ① 提取候选';
+  if (stage === 'initialize_root') return 'Initialize ② 生成根节点';
+  if (stage.startsWith('reevaluate_batch_')) {
+    return `Re-evaluate 批次 ${stage.slice('reevaluate_batch_'.length)}`;
+  }
+  return stage;
+}
+
+function elapsedLabel(call: ModelCallTrace): string {
+  const start = Date.parse(call.startedAt);
+  const end = call.finishedAt ? Date.parse(call.finishedAt) : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '耗时未知';
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  return call.status === 'running' ? `已等待 ${seconds}s` : `耗时 ${seconds}s`;
+}
+
+function Preview({ title, preview }: { title: string; preview: TracePreview }) {
+  return (
+    <details>
+      <summary>
+        {title} · 原始 {preview.originalChars} 字符{preview.truncated ? ' · 已截断' : ''}
+      </summary>
+      <pre>{preview.text}</pre>
+    </details>
+  );
+}
+
 export function WorkflowPanel() {
   const { state, api, dispatch, refresh, reportError } = useApp();
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -47,6 +111,7 @@ export function WorkflowPanel() {
   const [stagedSources, setStagedSources] = useState<StagedSource[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -247,26 +312,80 @@ export function WorkflowPanel() {
       ) : null}
       {error ? <p className="error">{error}</p> : null}
       <ul className="run-list">
-        {runs.map((run) => (
-          <li key={run.id} className={`run status-${run.status}`}>
-            <div>
-              <strong>{run.workflowType}</strong> · {run.status} · 步骤：{run.currentStep}
-            </div>
-            {run.summary ? (
-              <pre className="run-summary">{JSON.stringify(run.summary, null, 2)}</pre>
-            ) : null}
-            {run.error ? (
-              <button className="danger" onClick={() => showRunError(run)}>
-                查看错误详情
+        {runs.map((run) => {
+          const modelCalls = modelCallsOf(run);
+          const expanded = expandedRunId === run.id;
+          return (
+            <li key={run.id} className={`run status-${run.status}`}>
+              <div className="run-heading">
+                <strong>{run.workflowType}</strong> · {run.status} · 步骤：{run.currentStep}
+              </div>
+              <button
+                className="secondary"
+                aria-expanded={expanded}
+                onClick={() => setExpandedRunId(expanded ? null : run.id)}
+              >
+                {expanded ? '收起模型记录' : `查看模型记录（${modelCalls.length}）`}
               </button>
-            ) : null}
-            {isActive(run) ? (
-              <button className="danger" onClick={() => void cancel(run.id)}>
-                取消（不回滚已写入提案）
-              </button>
-            ) : null}
-          </li>
-        ))}
+              {run.error ? (
+                <button className="danger" onClick={() => showRunError(run)}>
+                  查看错误详情
+                </button>
+              ) : null}
+              {isActive(run) ? (
+                <button className="danger" onClick={() => void cancel(run.id)}>
+                  取消（不回滚已写入提案）
+                </button>
+              ) : null}
+              {expanded ? (
+                <div className="model-call-log" aria-label="模型调用记录">
+                  <p className="muted">
+                    仅管理员可见。密钥字段会脱敏；源码、上下文和响应按长度截断；不包含模型内部思维链。
+                    每次运行最多保留最近 50 条。
+                  </p>
+                  {modelCalls.length === 0 ? (
+                    <p className="empty">此运行没有模型记录（可能由旧版本启动或尚未发出请求）。</p>
+                  ) : (
+                    modelCalls.map((call) => (
+                      <article key={call.id} className={`model-call status-${call.status}`}>
+                        <header>
+                          <strong>{stageLabel(call.stage)}</strong>
+                          <span className="badge">{call.status}</span>
+                          <span className="badge">{elapsedLabel(call)}</span>
+                        </header>
+                        <p className="model-call-meta">
+                          {call.provider} / {call.model} · reasoning={call.reasoningEffort} ·
+                          schema=
+                          {call.outputSchemaName}
+                          {call.maxOutputTokens ? ` · maxOutputTokens=${call.maxOutputTokens}` : ''}
+                        </p>
+                        <Preview title="发送的指令" preview={call.request.instructions} />
+                        <Preview title="发送的上下文（已过滤）" preview={call.request.input} />
+                        {call.response ? (
+                          <Preview title="模型最终结构化响应" preview={call.response} />
+                        ) : null}
+                        {call.providerResponseId ? (
+                          <p className="model-call-meta">responseId：{call.providerResponseId}</p>
+                        ) : null}
+                        {call.usage ? (
+                          <pre className="model-call-usage">{JSON.stringify(call.usage)}</pre>
+                        ) : null}
+                        {call.error ? (
+                          <p className="error">
+                            {call.error.code}: {call.error.message}
+                          </p>
+                        ) : null}
+                      </article>
+                    ))
+                  )}
+                </div>
+              ) : null}
+              {run.summary ? (
+                <pre className="run-summary">{JSON.stringify(run.summary, null, 2)}</pre>
+              ) : null}
+            </li>
+          );
+        })}
         {runs.length === 0 ? <p className="empty">暂无 WorkflowRun。</p> : null}
       </ul>
     </section>
