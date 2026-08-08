@@ -1,6 +1,9 @@
+import { loadModelConfigFile } from './model-config.js';
+
 /**
  * 服务配置（IMPLEMENTATION_DESIGN §15.1）。
  * workspace 来自 TREEDIAGRAM_WORKSPACE 或 CLI --workspace；端口默认 4317，仅绑定 127.0.0.1。
+ * 模型配置合并优先级：JSON 配置文件（见 model-config.ts）> 环境变量 > 默认值。
  */
 export interface ServerConfig {
   workspaceDir: string;
@@ -11,8 +14,12 @@ export interface ServerConfig {
   /** Agent 工作流模型配置（§15.1）。 */
   model: string;
   modelTimeoutMs: number;
-  /** 开发用 fake provider 开关；非空时忽略 OPENAI_API_KEY。 */
+  /** 开发用 fake provider 开关；非空时忽略 apiKey。 */
   modelProvider: 'fake' | null;
+  /** OpenAI 兼容端点凭证（配置文件 apiKey 或 OPENAI_API_KEY）；null 表示未配置。 */
+  modelApiKey: string | null;
+  /** 兼容网关/代理端点（配置文件 baseUrl 或 OPENAI_BASE_URL）；null 表示官方端点。 */
+  modelBaseUrl: string | null;
 }
 
 export const DEFAULT_PORT = 4317;
@@ -90,14 +97,25 @@ export function loadServerConfig(
   const logLevel = (LOG_LEVELS as readonly string[]).includes(logLevelRaw)
     ? (logLevelRaw as ServerConfig['logLevel'])
     : fail(`LOG_LEVEL 非法: ${logLevelRaw}`);
+  // JSON 配置文件 > 环境变量 > 默认值
+  const fileConfig = loadModelConfigFile(workspaceDir, env, argv);
+  const modelProvider =
+    fileConfig?.provider === 'fake'
+      ? ('fake' as const)
+      : fileConfig?.provider === 'openai'
+        ? null
+        : parseModelProvider(env['TREEDIAGRAM_MODEL_PROVIDER']);
   return {
     workspaceDir,
     host: '127.0.0.1',
     port: parsePort(env['TREEDIAGRAM_PORT']),
     maxSourceBytes: parseMaxSourceBytes(env['TREEDIAGRAM_MAX_SOURCE_BYTES']),
     logLevel,
-    model: env['TREEDIAGRAM_MODEL']?.trim() || DEFAULT_MODEL,
-    modelTimeoutMs: parseModelTimeoutMs(env['TREEDIAGRAM_MODEL_TIMEOUT_MS']),
-    modelProvider: parseModelProvider(env['TREEDIAGRAM_MODEL_PROVIDER']),
+    model: fileConfig?.model ?? (env['TREEDIAGRAM_MODEL']?.trim() || DEFAULT_MODEL),
+    modelTimeoutMs:
+      fileConfig?.timeoutMs ?? parseModelTimeoutMs(env['TREEDIAGRAM_MODEL_TIMEOUT_MS']),
+    modelProvider,
+    modelApiKey: fileConfig?.apiKey ?? env['OPENAI_API_KEY']?.trim() ?? null,
+    modelBaseUrl: fileConfig?.baseUrl ?? env['OPENAI_BASE_URL']?.trim() ?? null,
   };
 }

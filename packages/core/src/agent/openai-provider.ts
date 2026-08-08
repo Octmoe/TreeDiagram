@@ -71,8 +71,15 @@ export class OpenAIProvider implements ModelProvider {
   constructor(
     apiKey: string,
     private readonly timeoutMs: number,
+    /** 兼容网关/代理端点；缺省时 SDK 回退 OPENAI_BASE_URL 环境变量，再回退官方端点。 */
+    baseUrl?: string | undefined,
   ) {
-    this.client = new OpenAI({ apiKey, maxRetries: 0, timeout: timeoutMs });
+    this.client = new OpenAI({
+      apiKey,
+      baseURL: baseUrl ?? undefined,
+      maxRetries: 0,
+      timeout: timeoutMs,
+    });
   }
 
   async generateStructured<T>(

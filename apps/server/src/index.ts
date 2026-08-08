@@ -48,6 +48,7 @@ async function main(): Promise<void> {
       staticUi: existsSync(defaultWebDistDir()),
       modelProvider: providerName ?? 'unconfigured',
       model: providerName ? config.model : null,
+      modelBaseUrl: providerName === 'openai' ? (config.modelBaseUrl ?? 'official') : null,
     },
     'TreeDiagram server 启动',
   );

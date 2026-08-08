@@ -26,13 +26,13 @@ export const unconfiguredWorkflowRunner: WorkflowRunner = {
   start(): never {
     throw new DomainError(
       'MODEL_NOT_CONFIGURED',
-      '尚未配置模型提供方：请设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',
+      '尚未配置模型提供方：请配置 .treediagram/model.json、设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',
     );
   },
   resume(): never {
     throw new DomainError(
       'MODEL_NOT_CONFIGURED',
-      '尚未配置模型提供方：请设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',
+      '尚未配置模型提供方：请配置 .treediagram/model.json、设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',
     );
   },
   cancel(): never {
@@ -42,8 +42,8 @@ export const unconfiguredWorkflowRunner: WorkflowRunner = {
 
 /**
  * 按配置组装执行器（§12.2/§15.1）：
- * - TREEDIAGRAM_MODEL_PROVIDER=fake → FakeModelProvider（开发/演示）；
- * - 否则有 OPENAI_API_KEY → OpenAIProvider；
+ * - modelProvider=fake（配置文件 provider 或 TREEDIAGRAM_MODEL_PROVIDER）→ FakeModelProvider（开发/演示）；
+ * - 否则有 apiKey（配置文件或 OPENAI_API_KEY）→ OpenAIProvider（可带 baseUrl 兼容网关）；
  * - 都没有 → unconfiguredWorkflowRunner。
  * safetyIdentifier = sha256(workspaceId) 前 32 位十六进制字符。
  */
@@ -52,9 +52,8 @@ export function createWorkflowRunner(
   clock: Clock,
   config: ServerConfig,
   workspaceId: string,
-  env: NodeJS.ProcessEnv = process.env,
 ): { runner: WorkflowRunner; core: CoreWorkflowRunner | null; providerName: string | null } {
-  const provider = selectProvider(config, env);
+  const provider = selectProvider(config);
   if (!provider) {
     return { runner: unconfiguredWorkflowRunner, core: null, providerName: null };
   }
@@ -66,9 +65,11 @@ export function createWorkflowRunner(
   return { runner: core, core, providerName: provider.providerName };
 }
 
-function selectProvider(config: ServerConfig, env: NodeJS.ProcessEnv): ModelProvider | null {
+function selectProvider(config: ServerConfig): ModelProvider | null {
   if (config.modelProvider === 'fake') return FakeModelProvider.forDevelopment();
-  const apiKey = env['OPENAI_API_KEY']?.trim();
-  if (apiKey) return new OpenAIProvider(apiKey, config.modelTimeoutMs);
+  const apiKey = config.modelApiKey?.trim();
+  if (apiKey) {
+    return new OpenAIProvider(apiKey, config.modelTimeoutMs, config.modelBaseUrl ?? undefined);
+  }
   return null;
 }

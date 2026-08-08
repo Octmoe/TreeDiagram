@@ -3,6 +3,7 @@ export { buildServer, createApp } from './app.js';
 export type { AppInstance } from './types.js';
 export type { ServerContext } from './context.js';
 export { loadServerConfig, type ServerConfig } from './config.js';
+export { loadModelConfigFile, parseModelConfigFile, type ModelFileConfig } from './model-config.js';
 export {
   createWorkflowRunner,
   unconfiguredWorkflowRunner,

@@ -67,10 +67,35 @@ TREEDIAGRAM_WORKSPACE=<dir> npm run dev
 | `TREEDIAGRAM_PORT`             | `4317`          | 监听端口                                                                          |
 | `TREEDIAGRAM_MODEL`            | `gpt-5.6-terra` | Agent 工作流模型                                                                  |
 | `OPENAI_API_KEY`               | —               | 真实模型调用凭证；未设置时写接口可用、Agent 工作流返回 422 `MODEL_NOT_CONFIGURED` |
+| `OPENAI_BASE_URL`              | 官方端点        | OpenAI 兼容网关/代理端点                                                          |
+| `TREEDIAGRAM_MODEL_CONFIG`     | 见下节          | 模型 JSON 配置文件路径（或 `--model-config <path>`）                              |
 | `TREEDIAGRAM_MODEL_PROVIDER`   | —               | 设为 `fake` 使用确定性假模型（离线演示/调试）                                     |
 | `TREEDIAGRAM_MODEL_TIMEOUT_MS` | `300000`        | 模型超时（10s–900s）                                                              |
 | `TREEDIAGRAM_MAX_SOURCE_BYTES` | `2097152`       | source 上传上限（只可从默认下调）                                                 |
 | `LOG_LEVEL`                    | `info`          | `debug/info/warn/error`                                                           |
+
+## 模型配置（JSON 文件）
+
+Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
+`<workspace>/.treediagram/model.json`（与 token 同目录，启动时自动加载）；
+也可用 `--model-config <path>` 或 `TREEDIAGRAM_MODEL_CONFIG` 指定其他位置。
+
+```json
+{
+  "provider": "openai",
+  "apiKey": "sk-...",
+  "baseUrl": "https://your-gateway.example.com/v1",
+  "model": "gpt-5.6-terra",
+  "timeoutMs": 300000
+}
+```
+
+- `provider`：`openai`（默认，需 `apiKey`）或 `fake`（离线演示，不得再设 `apiKey/baseUrl`）；
+- `baseUrl`：可选，指向任何 OpenAI 兼容端点（网关/代理/自托管）；
+- `model`、`timeoutMs`：可选，覆盖对应环境变量；
+- 合并优先级：**配置文件 > 环境变量 > 默认值**；配置文件只含部分字段时，其余字段回退到环境变量；
+- 文件是敏感数据：启动日志只打印 provider 名称与 baseUrl，绝不打印 `apiKey`；
+- 文件不合法（JSON 错误/未知字段/非法值）会在启动时给出带路径的明确错误并拒绝启动。
 
 ## 备份与恢复
 

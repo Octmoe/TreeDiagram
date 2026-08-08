@@ -42,6 +42,8 @@ describe('M2 HTTP API', () => {
         model: 'test-model',
         modelTimeoutMs: 300_000,
         modelProvider: null,
+        modelApiKey: null,
+        modelBaseUrl: null,
       },
       workflowRunner: unconfiguredWorkflowRunner,
     });
