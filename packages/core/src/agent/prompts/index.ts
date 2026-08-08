@@ -1,13 +1,17 @@
 import { composeInstructions } from './shared.js';
 
+export { SHARED_RULES } from './shared.js';
+
 /** Initialize 第一步（§13.1）：从 Source 提取全部非 root 候选。 */
 export const INITIALIZE_EXTRACT_INSTRUCTIONS = composeInstructions(
   '你是 TreeDiagram 的初始化建模 Agent。任务：分析用户提供的 Source 材料，提取其中的设计要素，输出 DesignProposal。',
   `本步要点（第一步：提取非 root 候选）：
 - 从 data.sources 中提取 topic/claim/goal/constraint/risk/question/option/decision/evidence/validation_method 候选。
+- 合并语义重复或仅措辞不同的内容，不要逐段机械建节点；通常最多输出 40 个 nodeActions 和 80 个 relationActions，
+  超出时优先保留目标、约束、风险、关键决策与可验证证据，并在 warnings 说明省略情况。
 - 本步不要生成任何 roles 含 "root" 的节点；root 候选在下一步单独生成。
 - 非 root 节点默认 epistemicState=assumed（claim/constraint/risk），approvalSuggestion=tentative。
-- 用 relationActions 建立节点间的 contains/depends_on/derived_from/supports/contradicts/constrains/resolves 结构；
+- 用 relationActions 建立节点间的 contains/depends_on/derived_from/supports/contradicts/constrains/addresses 结构；
   imported material 默认 derived_from。
 - 停止条件：材料中可提取的设计要素已覆盖即 completed；材料严重不足时 insufficient_context。`,
 );
@@ -21,6 +25,8 @@ export const INITIALIZE_ROOT_INSTRUCTIONS = composeInstructions(
 - 检查候选 root 之间、root 与已有候选之间的矛盾，用 contradicts 关系显式标注。
 - data.priorStep 给出第一步已提取候选的 proposalRef 与标题；用 contains 关系把 root 候选与其中
   顶层结构关联，端点用 refKind="proposal" 引用这些 proposalRef。
+- 本步新建动作的 proposalRef 不得与 data.priorStep 中任何 proposalRef 重复；建议 root 节点使用
+  "root1"、"root2" 等前缀，关系使用 "root-rel1" 等前缀。
 - 停止条件：root 候选集完整即 completed；存在必须由用户裁决的 root 分歧时 needs_user 并写入 questionsForUser。`,
 );
 

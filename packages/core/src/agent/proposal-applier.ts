@@ -126,7 +126,8 @@ export class ProposalApplier {
           displayTitle: action.displayTitle,
           contentText: action.contentText,
           roles: action.roles,
-          attributes: action.attributes,
+          // 空属性类型（topic/claim/option）契约中为 null，落库归一为 {}
+          attributes: action.attributes ?? {},
           approvalState,
           epistemicState: action.epistemicState,
         };
@@ -192,12 +193,12 @@ export class ProposalApplier {
           return revisionId;
         }
         // proposal 内新建节点的修订也算活动（先建节点后建关系）
-        if (!activeRevisionIds.has(endpoint.ref) && !revisionByRef.has(endpoint.ref)) {
+        if (!activeRevisionIds.has(endpoint.ref)) {
           throw new DomainError('MODEL_OUTPUT_INVALID', '关系端点引用了不活动的 revision', {
             ref: endpoint.ref,
           });
         }
-        return revisionByRef.get(endpoint.ref) ?? endpoint.ref;
+        return endpoint.ref;
       };
 
       for (const action of proposal.relationActions) {
@@ -211,7 +212,8 @@ export class ProposalApplier {
           fromNodeRevisionId: resolveEndpoint(action.from),
           toNodeRevisionId: resolveEndpoint(action.to),
           rationaleText: action.rationale,
-          attributes: action.attributes,
+          // 非 contradicts 关系契约中为 null，落库归一为 {}
+          attributes: action.attributes ?? {},
           approvalState,
         };
         let revisionId: string;

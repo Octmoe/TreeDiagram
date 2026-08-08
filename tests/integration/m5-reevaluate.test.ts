@@ -137,7 +137,7 @@ function allValidWithMigration(input: string, oldARevisionId: string, newARevisi
         from: { refKind: 'existing_revision', ref: migrate(item.entity.fromRevisionId) },
         to: { refKind: 'existing_revision', ref: migrate(item.entity.toRevisionId) },
         rationale: '端点迁移到新修订',
-        attributes: {},
+        attributes: null,
         approvalSuggestion: 'tentative',
       });
       results.push({

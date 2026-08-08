@@ -235,7 +235,7 @@ describe('M1 工作区重开恢复', () => {
               displayTitle: '恢复子节点',
               contentText: 'resume 后写入',
               roles: [],
-              attributes: {},
+              attributes: null,
               approvalSuggestion: 'tentative',
               epistemicState: null,
               rationale: '测试 rationale',

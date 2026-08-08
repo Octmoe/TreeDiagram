@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   ReviewItem,
   StartWorkflowRequest,
@@ -6,6 +6,7 @@ import type {
   WorkflowType,
 } from '@treediagram/contracts';
 import { DesignProposalSchema, ReevaluationBatchResultSchema } from '@treediagram/contracts';
+import { EPISTEMIC_NODE_TYPES } from '@treediagram/contracts';
 import { DomainError } from '../errors.js';
 import { resolveDelegation } from '../domain/delegation-resolver.js';
 import { checkConsistency } from '../domain/consistency-checker.js';
@@ -16,7 +17,12 @@ import { ChangeSetService } from '../services/change-set-service.js';
 import { NodeService } from '../services/node-service.js';
 import type { ProjectRecord } from '../db/repositories/project.js';
 import type { WorkflowRunId } from '@treediagram/contracts';
-import type { ModelProvider } from './model-provider.js';
+import type {
+  ModelProvider,
+  ModelUsage,
+  StructuredGenerationRequest,
+  StructuredGenerationResult,
+} from './model-provider.js';
 import {
   buildDeriveContext,
   buildGrillContext,
@@ -60,6 +66,8 @@ interface RunCheckpoint {
   containerRevisionId?: string | null;
   providerResponseId: string | null;
   usage: Record<string, unknown> | null;
+  /** 管理员可见的模型调用轨迹；只保存脱敏、截断后的请求/响应预览。 */
+  modelCalls?: ModelCallTrace[];
   applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
   /** ai_managed 自动 adopt 结果（§10）。 */
   autoAdopted?: boolean;
@@ -74,6 +82,33 @@ interface RunCheckpoint {
     itemIds: string[];
     applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
   }>;
+}
+
+interface TracePreview {
+  text: string;
+  originalChars: number;
+  truncated: boolean;
+}
+
+interface ModelCallTrace {
+  id: string;
+  stage: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled';
+  provider: string;
+  model: string;
+  reasoningEffort: StructuredGenerationRequest['reasoningEffort'];
+  maxOutputTokens: number | null;
+  outputSchemaName: string;
+  startedAt: string;
+  finishedAt: string | null;
+  request: {
+    instructions: TracePreview;
+    input: TracePreview;
+  };
+  response: TracePreview | null;
+  providerResponseId: string | null;
+  usage: ModelUsage | null;
+  error: { code: string; message: string } | null;
 }
 
 const EMPTY_CHECKPOINT: RunCheckpoint = {
@@ -91,6 +126,89 @@ function sha256Hex(text: string): string {
 
 function checkpointOf(run: WorkflowRun): RunCheckpoint {
   return { ...EMPTY_CHECKPOINT, ...(run.checkpoint as Partial<RunCheckpoint>) };
+}
+
+const TRACE_SECRET_KEY =
+  /(?:api[_-]?key|authorization|password|secret|access[_-]?token|refresh[_-]?token)/i;
+const TRACE_CONTENT_KEY = /^(?:contentText|rationaleText|sourceText)$/i;
+const TRACE_MAX_INSTRUCTIONS = 8_000;
+const TRACE_MAX_INPUT = 12_000;
+const TRACE_MAX_RESPONSE = 16_000;
+const TRACE_MAX_CALLS = 50;
+const MODEL_MAX_OUTPUT_TOKENS = 16_384;
+
+function redactSecrets(text: string): string {
+  return text
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:sk|rk)-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_KEY]')
+    .replace(
+      /((?:api[_-]?key|authorization|password|secret|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi,
+      '$1[REDACTED]',
+    );
+}
+
+function sanitizeTraceValue(
+  value: unknown,
+  state: { truncated: boolean },
+  key = '',
+  depth = 0,
+): unknown {
+  if (TRACE_SECRET_KEY.test(key)) return '[REDACTED]';
+  if (typeof value === 'string') {
+    const redacted = redactSecrets(value);
+    const max = TRACE_CONTENT_KEY.test(key) ? 1_000 : 2_000;
+    if (redacted.length <= max) return redacted;
+    state.truncated = true;
+    return `${redacted.slice(0, max)}… [已截断 ${redacted.length - max} 字符]`;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= 10) {
+    state.truncated = true;
+    return '[已截断：嵌套过深]';
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 50) state.truncated = true;
+    return value.slice(0, 50).map((entry) => sanitizeTraceValue(entry, state, '', depth + 1));
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 100) state.truncated = true;
+  return Object.fromEntries(
+    entries
+      .slice(0, 100)
+      .map(([entryKey, entry]) => [
+        entryKey,
+        sanitizeTraceValue(entry, state, entryKey, depth + 1),
+      ]),
+  );
+}
+
+function previewText(text: string, maxChars: number): TracePreview {
+  const redacted = redactSecrets(text);
+  return {
+    text: redacted.slice(0, maxChars),
+    originalChars: text.length,
+    truncated: redacted.length > maxChars,
+  };
+}
+
+function previewJson(value: unknown, maxChars: number): TracePreview {
+  const state = { truncated: false };
+  const sanitized = sanitizeTraceValue(value, state);
+  const text = JSON.stringify(sanitized, null, 2) ?? String(sanitized);
+  const clipped = text.length > maxChars;
+  return {
+    text: text.slice(0, maxChars),
+    originalChars: JSON.stringify(value)?.length ?? String(value).length,
+    truncated: state.truncated || clipped,
+  };
+}
+
+function previewModelInput(input: string): TracePreview {
+  try {
+    return previewJson(JSON.parse(input), TRACE_MAX_INPUT);
+  } catch {
+    return previewText(input, TRACE_MAX_INPUT);
+  }
 }
 
 export class CoreWorkflowRunner {
@@ -296,6 +414,78 @@ export class CoreWorkflowRunner {
     return run;
   }
 
+  /**
+   * 在 provider 调用前后持久化可观测轨迹。这里只记录最终结构化输出与经过
+   * 脱敏/截断的请求预览；Responses API 的内部 reasoning 不在返回值中，也不记录。
+   */
+  private async generateWithTrace<T>(
+    runId: string,
+    checkpoint: RunCheckpoint,
+    stage: string,
+    request: StructuredGenerationRequest,
+  ): Promise<StructuredGenerationResult<T>> {
+    const calls = (checkpoint.modelCalls ??= []);
+    // 进程中断后 resume 会新建调用；把遗留 running 轨迹明确标成失败，避免看似仍在等待。
+    for (const previous of calls) {
+      if (previous.status === 'running') {
+        previous.status = 'failed';
+        previous.finishedAt = this.clock.now();
+        previous.error = { code: 'PROCESS_INTERRUPTED', message: '模型调用被进程中断' };
+      }
+    }
+    if (calls.length >= TRACE_MAX_CALLS) {
+      calls.splice(0, calls.length - TRACE_MAX_CALLS + 1);
+    }
+    const trace: ModelCallTrace = {
+      id: randomUUID(),
+      stage,
+      status: 'running',
+      provider: this.config.provider.providerName,
+      model: request.model,
+      reasoningEffort: request.reasoningEffort,
+      maxOutputTokens: request.maxOutputTokens ?? null,
+      outputSchemaName: request.outputSchemaName,
+      startedAt: this.clock.now(),
+      finishedAt: null,
+      request: {
+        instructions: previewText(request.instructions, TRACE_MAX_INSTRUCTIONS),
+        input: previewModelInput(request.input),
+      },
+      response: null,
+      providerResponseId: null,
+      usage: null,
+      error: null,
+    };
+    calls.push(trace);
+    this.patch(runId, {
+      currentStep: `running/generate/${stage}`,
+      checkpoint: checkpoint as unknown as Record<string, unknown>,
+    });
+
+    try {
+      const result = await this.config.provider.generateStructured<T>(request);
+      trace.status = 'succeeded';
+      trace.finishedAt = this.clock.now();
+      trace.response = previewJson(result.value, TRACE_MAX_RESPONSE);
+      trace.providerResponseId = result.providerResponseId;
+      trace.usage = result.usage;
+      this.patch(runId, { checkpoint: checkpoint as unknown as Record<string, unknown> });
+      return result;
+    } catch (error) {
+      trace.status = request.signal?.aborted ? 'cancelled' : 'failed';
+      trace.finishedAt = this.clock.now();
+      trace.error = {
+        code: error instanceof DomainError ? error.code : 'MODEL_PROVIDER_FAILED',
+        message: redactSecrets(error instanceof Error ? error.message : String(error)).slice(
+          0,
+          500,
+        ),
+      };
+      this.patch(runId, { checkpoint: checkpoint as unknown as Record<string, unknown> });
+      throw error;
+    }
+  }
+
   /** 取消检查：步骤之间调用；已取消时抛出（中断执行）。 */
   private assertNotCancelled(runId: string): WorkflowRun {
     const run = this.db.repos.workflowRun.getById(runId);
@@ -395,47 +585,65 @@ export class CoreWorkflowRunner {
       if (!checkpoint.proposal) {
         if (run.workflowType === 'initialize') {
           // §13.1：第一步提取非 root 候选，第二步 root 候选与矛盾
-          const first = await this.config.provider.generateStructured({
-            model: this.config.model,
-            instructions: INITIALIZE_EXTRACT_INSTRUCTIONS,
-            input: JSON.stringify(context),
-            outputSchemaName: 'DesignProposal',
-            outputSchema: DesignProposalSchema,
-            reasoningEffort: 'medium',
-            safetyIdentifier: this.config.safetyIdentifier,
-            signal: controller.signal,
-          });
-          this.assertNotCancelled(runId);
-          checkpoint.proposals = [first.value];
-          checkpoint.providerResponseId = first.providerResponseId;
-          checkpoint.usage = first.usage as unknown as Record<string, unknown>;
-          checkpoint.steps.push('generate_extract');
-          run = this.patch(runId, {
-            checkpoint: checkpoint as unknown as Record<string, unknown>,
-            providerResponseId: first.providerResponseId,
-            usage: first.usage as unknown as Record<string, unknown>,
-          });
+          let firstProposal = checkpoint.proposals?.[0];
+          if (!firstProposal) {
+            const first = await this.generateWithTrace(runId, checkpoint, 'initialize_extract', {
+              model: this.config.model,
+              instructions: INITIALIZE_EXTRACT_INSTRUCTIONS,
+              input: JSON.stringify(context),
+              outputSchemaName: 'DesignProposal',
+              outputSchema: DesignProposalSchema,
+              maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+              reasoningEffort: 'low',
+              safetyIdentifier: this.config.safetyIdentifier,
+              signal: controller.signal,
+            });
+            this.assertNotCancelled(runId);
+            assertProposalWorkflowType('initialize', first.value);
+            firstProposal = first.value;
+            checkpoint.proposals = [firstProposal];
+            checkpoint.providerResponseId = first.providerResponseId;
+            checkpoint.usage = addModelUsage(null, first.usage);
+            checkpoint.steps.push('generate_extract');
+            run = this.patch(runId, {
+              checkpoint: checkpoint as unknown as Record<string, unknown>,
+              providerResponseId: first.providerResponseId,
+              usage: checkpoint.usage,
+            });
+          } else {
+            assertProposalWorkflowType('initialize', firstProposal);
+          }
 
           // 第二步输入附带第一步提案的 proposalRef 摘要，使 root 步可用 refKind="proposal" 关联
-          const priorStep = summarizeProposalRefs(first.value);
-          const second = await this.config.provider.generateStructured({
-            model: this.config.model,
-            instructions: INITIALIZE_ROOT_INSTRUCTIONS,
-            input: JSON.stringify({
-              ...context,
-              data: { ...(context['data'] as object), priorStep },
-            }),
-            outputSchemaName: 'DesignProposal',
-            outputSchema: DesignProposalSchema,
-            reasoningEffort: 'medium',
-            safetyIdentifier: this.config.safetyIdentifier,
-            signal: controller.signal,
-          });
-          checkpoint.proposals.push(second.value);
-          checkpoint.providerResponseId = second.providerResponseId;
-          checkpoint.steps.push('generate_root');
+          const priorStep = summarizeProposalRefs(firstProposal);
+          let secondProposal = checkpoint.proposals?.[1];
+          if (!secondProposal) {
+            const second = await this.generateWithTrace(runId, checkpoint, 'initialize_root', {
+              model: this.config.model,
+              instructions: INITIALIZE_ROOT_INSTRUCTIONS,
+              input: JSON.stringify({
+                ...context,
+                data: { ...(context['data'] as object), priorStep },
+              }),
+              outputSchemaName: 'DesignProposal',
+              outputSchema: DesignProposalSchema,
+              maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+              reasoningEffort: 'low',
+              safetyIdentifier: this.config.safetyIdentifier,
+              signal: controller.signal,
+            });
+            this.assertNotCancelled(runId);
+            assertProposalWorkflowType('initialize', second.value);
+            secondProposal = second.value;
+            checkpoint.proposals = [firstProposal, secondProposal];
+            checkpoint.providerResponseId = second.providerResponseId;
+            checkpoint.usage = addModelUsage(checkpoint.usage, second.usage);
+            checkpoint.steps.push('generate_root');
+          } else {
+            assertProposalWorkflowType('initialize', secondProposal);
+          }
           // 合并两步提案（root 步在前，保证 root 节点先建）
-          checkpoint.proposal = mergeProposals([second.value, first.value]);
+          checkpoint.proposal = mergeProposals([secondProposal, firstProposal]);
         } else {
           // derive/grill/unbox 单次生成；grill/unbox 用 high reasoning（§12.2 默认推理档）
           const instructions =
@@ -446,12 +654,13 @@ export class CoreWorkflowRunner {
                 : DERIVE_INSTRUCTIONS;
           const reasoningEffort =
             run.workflowType === 'grill' || run.workflowType === 'unbox' ? 'high' : 'medium';
-          const result = await this.config.provider.generateStructured({
+          const result = await this.generateWithTrace(runId, checkpoint, run.workflowType, {
             model: this.config.model,
             instructions,
             input: JSON.stringify(context),
             outputSchemaName: 'DesignProposal',
             outputSchema: DesignProposalSchema,
+            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
             reasoningEffort,
             safetyIdentifier: this.config.safetyIdentifier,
             signal: controller.signal,
@@ -663,16 +872,23 @@ export class CoreWorkflowRunner {
           batch.map((item) => this.reevaluationItemView(item)),
         );
         checkpoint.contextHash = sha256Hex(JSON.stringify(context));
-        const generated = await this.config.provider.generateStructured({
-          model: this.config.model,
-          instructions: REEVALUATE_INSTRUCTIONS,
-          input: JSON.stringify(context),
-          outputSchemaName: 'ReevaluationBatchResult',
-          outputSchema: ReevaluationBatchResultSchema,
-          reasoningEffort: 'medium',
-          safetyIdentifier: this.config.safetyIdentifier,
-          signal: controller.signal,
-        });
+        const batchNumber = (checkpoint.batches?.length ?? 0) + 1;
+        const generated = await this.generateWithTrace(
+          runId,
+          checkpoint,
+          `reevaluate_batch_${batchNumber}`,
+          {
+            model: this.config.model,
+            instructions: REEVALUATE_INSTRUCTIONS,
+            input: JSON.stringify(context),
+            outputSchemaName: 'ReevaluationBatchResult',
+            outputSchema: ReevaluationBatchResultSchema,
+            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            reasoningEffort: 'medium',
+            safetyIdentifier: this.config.safetyIdentifier,
+            signal: controller.signal,
+          },
+        );
         this.assertNotCancelled(runId);
         this.validateBatchResult(batch, generated.value);
         batchState = { itemIds: batchIds, result: generated.value, applied: null };
@@ -696,16 +912,18 @@ export class CoreWorkflowRunner {
           warnings: [],
           stopReason: result.stopReason,
         };
-        const applied = this.db.transaction(() =>
-          this.applier.apply(
+        const applied = this.db.transaction(() => {
+          // 与主路径一致：先做防御性归一（epistemicState 仅 epistemic 类型适用）
+          sanitizeProposal(run.workflowType, synthetic);
+          return this.applier.apply(
             project,
             run,
             synthetic,
             // 迁移/替代修订本身是复核决议（§9.3），不得再触发 §4.6 影响登记
             { effectivePolicy: null, skipImpactRegistration: true },
             author,
-          ),
-        );
+          );
+        });
         batchState.applied = {
           nodeRevisionIds: applied.appliedNodeRevisionIds,
           relationRevisionIds: applied.appliedRelationRevisionIds,
@@ -1067,6 +1285,21 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
+function addModelUsage(
+  current: Record<string, unknown> | null,
+  next: ModelUsage,
+): Record<string, unknown> {
+  const value = (key: keyof ModelUsage): number => {
+    const existing = current?.[key];
+    return typeof existing === 'number' && Number.isFinite(existing) ? existing : 0;
+  };
+  return {
+    inputTokens: value('inputTokens') + next.inputTokens,
+    outputTokens: value('outputTokens') + next.outputTokens,
+    totalTokens: value('totalTokens') + next.totalTokens,
+  };
+}
+
 /** initialize：合并两步提案为单个 DesignProposal。 */
 function mergeProposals(proposals: unknown[]): unknown {
   const [first, ...rest] = proposals as Array<{
@@ -1120,13 +1353,42 @@ function summarizeProposalRefs(proposal: unknown): unknown {
  * - grill：revise 一律强制 draft（不得直接 revise 已确认节点，由用户后续裁决）；
  * - unbox：剥离 root 角色（探索不触碰 root），全部输出仅 draft/tentative（由 applier 降级保证）。
  * 直接原地修改 checkpoint 中的 proposal，使持久化的 checkpoint 反映真实应用内容。
+ *
+ * 所有工作流通用：epistemicState 仅 claim/constraint/risk 适用（§4.2）。模型偶发
+ * 给其他类型输出 epistemic 值时归一为 null 并记 warning，而非让整个 run 以
+ * VALIDATION_FAILED 失败——与 approvalSuggestion 降级同属对不可信模型输出的防御性归一。
  */
 function sanitizeProposal(workflowType: WorkflowType, rawProposal: unknown): void {
   const proposal = rawProposal as {
-    nodeActions: Array<{ operation: string; approvalSuggestion: string; roles: string[] }>;
+    workflowType: string;
+    nodeActions: Array<{
+      operation: string;
+      approvalSuggestion: string;
+      roles: string[];
+      nodeType: string;
+      epistemicState: string | null;
+    }>;
     relationActions: Array<{ operation: string; approvalSuggestion: string }>;
     warnings: string[];
   };
+  if (workflowType !== 'reevaluate') {
+    assertProposalWorkflowType(workflowType, proposal);
+  }
+  let normalizedEpistemic = 0;
+  for (const action of proposal.nodeActions) {
+    if (
+      action.epistemicState !== null &&
+      !(EPISTEMIC_NODE_TYPES as readonly string[]).includes(action.nodeType)
+    ) {
+      action.epistemicState = null;
+      normalizedEpistemic += 1;
+    }
+  }
+  if (normalizedEpistemic > 0) {
+    proposal.warnings.push(
+      `${normalizedEpistemic} 个非 epistemic 类型节点的 epistemicState 已归一为 null（§4.2 仅 claim/constraint/risk 适用）`,
+    );
+  }
   if (workflowType === 'grill') {
     let forced = 0;
     for (const action of [...proposal.nodeActions, ...proposal.relationActions]) {
@@ -1147,5 +1409,15 @@ function sanitizeProposal(workflowType: WorkflowType, rawProposal: unknown): voi
         proposal.warnings.push('unbox：已剥离模型输出的 root 角色（§13.4 探索不触碰 root）');
       }
     }
+  }
+}
+
+function assertProposalWorkflowType(expected: WorkflowType, rawProposal: unknown): void {
+  const actual = (rawProposal as { workflowType?: unknown }).workflowType;
+  if (actual !== expected) {
+    throw new DomainError('MODEL_OUTPUT_INVALID', '模型输出 workflowType 与当前运行不一致', {
+      expected,
+      actual,
+    });
   }
 }

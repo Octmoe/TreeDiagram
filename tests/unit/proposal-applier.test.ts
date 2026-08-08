@@ -57,7 +57,7 @@ function nodeAction(ref: string, overrides: NodeActionOverrides = {}) {
     displayTitle: `节点 ${ref}`,
     contentText: `内容 ${ref}`,
     roles: overrides.roles ?? [],
-    attributes: overrides.attributes ?? {},
+    attributes: overrides.attributes ?? null,
     approvalSuggestion: overrides.approvalSuggestion ?? 'tentative',
     epistemicState: 'assumed',
     rationale: '测试 rationale',
@@ -74,7 +74,7 @@ function containsAction(ref: string, from: unknown, to: unknown) {
     from,
     to,
     rationale: '测试 rationale',
-    attributes: {},
+    attributes: null,
     approvalSuggestion: 'tentative',
   };
 }
@@ -259,6 +259,30 @@ describe('ProposalApplier（§12.4）', () => {
               'r1',
               { refKind: 'existing_revision', ref: randomUUID() },
               { refKind: 'proposal', ref: 'child' },
+            ),
+          ],
+        ),
+        NO_POLICY,
+        agentAuthor,
+      ),
+    ).toThrowError(DomainError);
+  });
+
+  it('existing_revision 不得借用同名 proposalRef 解析新节点', () => {
+    const ws = makeTestWorkspace();
+    const parent = quickNode(ws, { title: '已有父节点' });
+    const applier = new ProposalApplier(ws.ctx);
+    expect(() =>
+      applier.apply(
+        ws.project,
+        fakeRun(ws),
+        proposal(
+          [nodeAction('child')],
+          [
+            containsAction(
+              'r1',
+              { refKind: 'existing_revision', ref: parent.revision.id },
+              { refKind: 'existing_revision', ref: 'child' },
             ),
           ],
         ),

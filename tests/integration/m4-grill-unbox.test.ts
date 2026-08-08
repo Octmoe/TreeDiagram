@@ -55,9 +55,9 @@ function makeRunner(ws: TestWorkspace, provider: FakeModelProvider): CoreWorkflo
   });
 }
 
-const TYPE_ATTRIBUTES: Record<string, Record<string, unknown>> = {
-  claim: {},
-  topic: {},
+const TYPE_ATTRIBUTES: Record<string, Record<string, unknown> | null> = {
+  claim: null,
+  topic: null,
   question: { blocking: false },
   risk: { impactNote: null },
   constraint: { strength: 'hard' },
@@ -108,7 +108,7 @@ function containsAction(ref: string, from: unknown, to: unknown) {
     from,
     to,
     rationale: '测试 rationale',
-    attributes: {},
+    attributes: null,
     approvalSuggestion: 'tentative',
   };
 }
@@ -235,6 +235,7 @@ describe('M4 unbox 工作流（§13.4）', () => {
             { refKind: 'proposal', ref: 'alt1' },
           ),
         ],
+        { workflowType: 'unbox' },
       );
     });
     const runner = makeRunner(ws, provider);
@@ -312,7 +313,7 @@ describe('M4 ai_managed 自动 adopt（§10）', () => {
             { refKind: 'proposal', ref: 'auto1' },
           ),
         ],
-        [],
+        { workflowType: 'derive' },
       ),
     ]);
     const runner = makeRunner(ws, provider);
@@ -352,6 +353,7 @@ describe('M4 ai_managed 自动 adopt（§10）', () => {
             { refKind: 'proposal', ref: 'escape1' },
           ),
         ],
+        { workflowType: 'derive' },
       ),
     ]);
     const runner = makeRunner(ws, provider);

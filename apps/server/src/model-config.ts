@@ -88,11 +88,6 @@ export function parseModelConfigFile(path: string): ModelFileConfig {
     if (config.apiKey !== undefined || config.baseUrl !== undefined) {
       fail(path, 'provider=fake 时不得配置 apiKey/baseUrl');
     }
-  } else if (
-    config.apiKey === undefined &&
-    (config.baseUrl !== undefined || config.provider === 'openai')
-  ) {
-    fail(path, '配置 baseUrl/provider=openai 时必须同时提供 apiKey');
   }
   return config;
 }

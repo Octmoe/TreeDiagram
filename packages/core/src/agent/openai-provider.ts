@@ -9,6 +9,7 @@ import {
   type StructuredGenerationRequest,
   type StructuredGenerationResult,
 } from './model-provider.js';
+import { normalizeSchemaForStrictProvider } from './schema-normalize.js';
 
 /**
  * OpenAIProvider（IMPLEMENTATION_DESIGN §12.2）：
@@ -18,6 +19,7 @@ import {
 
 const MAX_RETRIES = 2;
 const RETRY_DELAYS_MS = [1000, 4000];
+const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
 /** 带入 DomainError 的服务端原始原因上限，避免整段报文撑爆错误响应。 */
 const PROVIDER_MESSAGE_MAX = 500;
 
@@ -34,6 +36,76 @@ interface ProviderErrorShape {
   name?: string;
   /** OpenAI SDK APIError 上解析后的服务端错误体（{ message, type, code } 或字符串）。 */
   error?: unknown;
+}
+
+/**
+ * OpenAI 兼容端点偶尔会把结构化 JSON 包在 Markdown fence 或少量说明文字中。
+ * 收集可解析对象候选，并优先返回通过调用方 schema 校验的候选；最终仍由 TypeBox
+ * 做完整校验，所以这里只兼容传输包装，不放宽任何领域字段。
+ */
+export function parseStructuredOutput(
+  text: string,
+  isValid: (value: unknown) => boolean,
+): { value: unknown; parsedAny: boolean } {
+  const trimmed = text.trim();
+  const candidates: string[] = [trimmed];
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+  candidates.push(...balancedJsonObjects(trimmed));
+
+  let firstParsed: unknown;
+  let parsedAny = false;
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (!parsedAny) firstParsed = parsed;
+      parsedAny = true;
+      if (isValid(parsed)) return { value: parsed, parsedAny: true };
+    } catch {
+      // 继续尝试下一个完整对象候选。
+    }
+  }
+  return { value: firstParsed, parsedAny };
+}
+
+/** 字符串感知的花括号扫描：提取文本中每个完整顶层 JSON object。 */
+function balancedJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (char === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
 }
 
 /**
@@ -147,13 +219,16 @@ export class OpenAIProvider implements ModelProvider {
           {
             model: request.model,
             store: false,
+            max_output_tokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
             instructions: request.instructions,
             input: request.input,
             text: {
               format: {
                 type: 'json_schema',
                 name: request.outputSchemaName,
-                schema: request.outputSchema as Record<string, unknown>,
+                // 严格 provider（DeepSeek）不接受嵌套 anyOf，发送前规范化；
+                // 本地校验仍用原始 schema（两者语义等价）
+                schema: normalizeSchemaForStrictProvider(request.outputSchema),
                 strict: true,
               },
             },
@@ -169,6 +244,20 @@ export class OpenAIProvider implements ModelProvider {
         if (refusal) {
           throw modelError('MODEL_REFUSED', '模型拒绝生成', { responseId: response.id });
         }
+        if (response.status === 'incomplete') {
+          const reason = response.incomplete_details?.reason ?? 'unknown';
+          if (reason === 'content_filter') {
+            throw modelError('MODEL_REFUSED', '模型输出被内容过滤器中止', {
+              responseId: response.id,
+              reason,
+            });
+          }
+          throw modelError('MODEL_OUTPUT_INVALID', '模型输出在完成结构化 JSON 前被截断', {
+            responseId: response.id,
+            reason,
+            maxOutputTokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+          });
+        }
         const text = response.output_text;
         if (!text) {
           throw modelError('MODEL_PROVIDER_FAILED', 'provider 返回空输出', {
@@ -176,14 +265,13 @@ export class OpenAIProvider implements ModelProvider {
             responseId: response.id,
           });
         }
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(text);
-        } catch {
+        const parsedOutput = parseStructuredOutput(text, (value) => checker.Check(value));
+        if (!parsedOutput.parsedAny) {
           throw modelError('MODEL_OUTPUT_INVALID', '模型输出不是合法 JSON', {
             responseId: response.id,
           });
         }
+        const parsed = parsedOutput.value;
         if (!checker.Check(parsed)) {
           const first = [...checker.Errors(parsed)][0];
           throw modelError('MODEL_OUTPUT_INVALID', '模型输出未通过 schema 校验', {

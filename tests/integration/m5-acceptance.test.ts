@@ -54,7 +54,7 @@ function nodeAction(ref: string, overrides: Record<string, unknown> = {}) {
     displayTitle: `节点 ${ref}`,
     contentText: `内容 ${ref}`,
     roles: [],
-    attributes: {},
+    attributes: null,
     approvalSuggestion: 'tentative',
     epistemicState: null,
     rationale: '测试 rationale',
@@ -72,7 +72,7 @@ function relationAction(ref: string, relationType: string, from: unknown, to: un
     from,
     to,
     rationale: `${relationType} rationale`,
-    attributes: {},
+    attributes: null,
     approvalSuggestion: 'tentative',
     ...extra,
   };
@@ -139,7 +139,7 @@ function reevaluationResponse(input: string, oldRootRevisionId: string, newRootR
           from: existingRef(migrate(item.entity.fromRevisionId)),
           to: existingRef(migrate(item.entity.toRevisionId)),
           rationale: '端点显式迁移到根新修订',
-          attributes: item.entity.relationType === 'contradicts' ? { blocking: false } : {},
+          attributes: item.entity.relationType === 'contradicts' ? { blocking: false } : null,
           approvalSuggestion: 'tentative',
         });
         results.push({

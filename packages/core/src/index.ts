@@ -32,6 +32,7 @@ export * from './services/delegation-service.js';
 export * from './agent/model-provider.js';
 export * from './agent/fake-provider.js';
 export * from './agent/openai-provider.js';
+export * from './agent/schema-normalize.js';
 export * from './agent/context-builder.js';
 export * from './agent/batch-order.js';
 export * from './agent/proposal-applier.js';

@@ -13,12 +13,20 @@ import {
   RolesSchema,
 } from './common.js';
 import { NODE_ATTRIBUTES_SCHEMAS } from './node.js';
-import { ContradictsAttributesSchema, EmptyRelationAttributesSchema } from './relation.js';
+import { ContradictsAttributesSchema } from './relation.js';
 
 // 模型结构化输出 schema（IMPLEMENTATION_DESIGN §12.4/§12.5）。
 // 所有对象 additionalProperties=false、所有字段 required；不适用值用 null 或空数组。
 
 const proposalRefSchema = Type.String({ minLength: 1, maxLength: LIMITS.proposalRef });
+
+/**
+ * 空 attributes 的节点类型（topic/claim/option）与非 contradicts 关系：
+ * 模型输出契约中用 null 表示「无属性」，proposal-applier 落库时归一为 {}。
+ * 原因：DeepSeek 等严格 provider 拒绝「无 properties 的对象 schema」，无法在
+ * strict json_schema 中表达空对象；null 是所有 provider 都支持的形态。
+ */
+const EMPTY_ATTRIBUTES_NODE_TYPES: ReadonlySet<string> = new Set(['topic', 'claim', 'option']);
 
 const nodeActionVariants = NODE_TYPES.map((nodeType) =>
   Type.Object(
@@ -31,7 +39,9 @@ const nodeActionVariants = NODE_TYPES.map((nodeType) =>
       displayTitle: Type.String({ minLength: 1, maxLength: LIMITS.displayTitle }),
       contentText: Type.String({ maxLength: LIMITS.contentText }),
       roles: RolesSchema,
-      attributes: NODE_ATTRIBUTES_SCHEMAS[nodeType],
+      attributes: EMPTY_ATTRIBUTES_NODE_TYPES.has(nodeType)
+        ? Type.Null()
+        : NODE_ATTRIBUTES_SCHEMAS[nodeType],
       approvalSuggestion: Type.Union([
         Type.Literal('draft'),
         Type.Literal('tentative'),
@@ -66,10 +76,8 @@ const relationActionVariants = RELATION_TYPES.map((relationType) =>
       from: endpointRefSchema,
       to: endpointRefSchema,
       rationale: Type.String({ minLength: 1, maxLength: LIMITS.rationale }),
-      attributes:
-        relationType === 'contradicts'
-          ? ContradictsAttributesSchema
-          : EmptyRelationAttributesSchema,
+      // 非 contradicts 关系无属性：契约中为 null（见上方 EMPTY_ATTRIBUTES_NODE_TYPES 注释）
+      attributes: relationType === 'contradicts' ? ContradictsAttributesSchema : Type.Null(),
       approvalSuggestion: Type.Union([
         Type.Literal('draft'),
         Type.Literal('tentative'),

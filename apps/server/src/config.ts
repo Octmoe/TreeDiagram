@@ -38,7 +38,7 @@ function fail(message: string): never {
 
 function parsePort(raw: string | undefined): number {
   if (raw === undefined || raw === '') return DEFAULT_PORT;
-  const port = Number.parseInt(raw, 10);
+  const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     fail(`TREEDIAGRAM_PORT 非法: ${raw}`);
   }
@@ -47,7 +47,7 @@ function parsePort(raw: string | undefined): number {
 
 function parseMaxSourceBytes(raw: string | undefined): number {
   if (raw === undefined || raw === '') return DEFAULT_MAX_SOURCE_BYTES;
-  const value = Number.parseInt(raw, 10);
+  const value = Number(raw);
   if (!Number.isInteger(value) || value < 1024 || value > DEFAULT_MAX_SOURCE_BYTES) {
     fail(
       `TREEDIAGRAM_MAX_SOURCE_BYTES 非法（允许 1024–${DEFAULT_MAX_SOURCE_BYTES}，只可从默认下调）: ${raw}`,
@@ -58,7 +58,7 @@ function parseMaxSourceBytes(raw: string | undefined): number {
 
 function parseModelTimeoutMs(raw: string | undefined): number {
   if (raw === undefined || raw === '') return DEFAULT_MODEL_TIMEOUT_MS;
-  const value = Number.parseInt(raw, 10);
+  const value = Number(raw);
   if (
     !Number.isInteger(value) ||
     value < MODEL_TIMEOUT_RANGE.min ||
@@ -105,6 +105,17 @@ export function loadServerConfig(
       : fileConfig?.provider === 'openai'
         ? null
         : parseModelProvider(env['TREEDIAGRAM_MODEL_PROVIDER']);
+  const envApiKey = env['OPENAI_API_KEY']?.trim() || null;
+  const envBaseUrl = env['OPENAI_BASE_URL']?.trim() || null;
+  const modelApiKey = modelProvider === 'fake' ? null : (fileConfig?.apiKey ?? envApiKey);
+  const modelBaseUrl = modelProvider === 'fake' ? null : (fileConfig?.baseUrl ?? envBaseUrl);
+  if (
+    modelProvider !== 'fake' &&
+    (fileConfig?.provider === 'openai' || modelBaseUrl !== null) &&
+    modelApiKey === null
+  ) {
+    fail('配置 provider=openai/baseUrl 时必须提供 apiKey（可来自配置文件或 OPENAI_API_KEY）');
+  }
   return {
     workspaceDir,
     host: '127.0.0.1',
@@ -115,7 +126,7 @@ export function loadServerConfig(
     modelTimeoutMs:
       fileConfig?.timeoutMs ?? parseModelTimeoutMs(env['TREEDIAGRAM_MODEL_TIMEOUT_MS']),
     modelProvider,
-    modelApiKey: fileConfig?.apiKey ?? env['OPENAI_API_KEY']?.trim() ?? null,
-    modelBaseUrl: fileConfig?.baseUrl ?? env['OPENAI_BASE_URL']?.trim() ?? null,
+    modelApiKey,
+    modelBaseUrl,
   };
 }

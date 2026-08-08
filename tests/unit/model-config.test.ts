@@ -71,13 +71,13 @@ describe('模型配置文件解析', () => {
     );
   });
 
-  it('provider=fake 不得携带 apiKey/baseUrl；baseUrl 必须搭配 apiKey', () => {
+  it('provider=fake 不得携带 apiKey/baseUrl；openai 字段允许由环境变量补足', () => {
     expect(() =>
       parseModelConfigFile(writeConfig('{"provider":"fake","apiKey":"sk"}')),
     ).toThrowError(/provider=fake/);
-    expect(() => parseModelConfigFile(writeConfig('{"baseUrl":"https://x.com/v1"}'))).toThrowError(
-      /必须同时提供 apiKey/,
-    );
+    expect(
+      parseModelConfigFile(writeConfig('{"provider":"openai","baseUrl":"https://x.com/v1"}')),
+    ).toEqual({ provider: 'openai', baseUrl: 'https://x.com/v1' });
   });
 
   it('显式路径不存在 → 报错；默认路径不存在 → null', () => {
@@ -125,6 +125,32 @@ describe('ServerConfig 合并优先级（文件 > 环境变量 > 默认）', () 
     expect(config.modelBaseUrl).toBe('https://gw.example.com/v1');
     expect(config.modelTimeoutMs).toBe(300_000); // 默认值
     expect(config.modelProvider).toBeNull();
+  });
+
+  it('文件中的 openai/baseUrl 可由环境变量补足 apiKey', () => {
+    const ws = makeWorkspace(
+      '{"provider":"openai","baseUrl":"https://gateway.example.com/v1","model":"file-model"}',
+    );
+    const config = loadServerConfig({ OPENAI_API_KEY: 'sk-env' }, ['--workspace', ws]);
+
+    expect(config.modelApiKey).toBe('sk-env');
+    expect(config.modelBaseUrl).toBe('https://gateway.example.com/v1');
+    expect(config.model).toBe('file-model');
+  });
+
+  it('显式 openai/baseUrl 在合并后仍无 apiKey 时拒绝启动', () => {
+    const ws = makeWorkspace('{"provider":"openai","baseUrl":"https://gateway.example.com/v1"}');
+    expect(() => loadServerConfig({}, ['--workspace', ws])).toThrowError(/apiKey/);
+  });
+
+  it('数值环境变量必须完整匹配整数，不接受尾随字符', () => {
+    const ws = makeWorkspace();
+    expect(() =>
+      loadServerConfig({ TREEDIAGRAM_PORT: '4317oops' }, ['--workspace', ws]),
+    ).toThrowError(/TREEDIAGRAM_PORT/);
+    expect(() =>
+      loadServerConfig({ TREEDIAGRAM_MODEL_TIMEOUT_MS: '300000ms' }, ['--workspace', ws]),
+    ).toThrowError(/TREEDIAGRAM_MODEL_TIMEOUT_MS/);
   });
 
   it('无文件时 env 生效；文件 provider=fake 优先于 env', () => {

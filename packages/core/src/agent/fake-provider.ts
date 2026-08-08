@@ -87,28 +87,61 @@ export class FakeModelProvider implements ModelProvider {
 
 function defaultFakeValue(schemaName: string, input: string): unknown {
   if (schemaName === 'DesignProposal') {
-    const workflowType = input.includes('"derive"') ? 'derive' : 'initialize';
+    const context = parseContext(input);
+    const workflowType =
+      context.task === 'derive' || context.task === 'grill' || context.task === 'unbox'
+        ? context.task
+        : 'initialize';
+    const priorNodeRefs = readPriorNodeRefs(context.data);
+    const isInitializeRoot = workflowType === 'initialize' && priorNodeRefs.length > 0;
+    const nodeRef = isInitializeRoot ? 'root1' : 'n1';
+    const relationActions: unknown[] = [];
+    if (isInitializeRoot) {
+      relationActions.push(
+        fakeContainsAction(
+          'r1',
+          { refKind: 'proposal', ref: nodeRef },
+          { refKind: 'proposal', ref: priorNodeRefs[0]! },
+        ),
+      );
+    } else {
+      const parentRevisionId =
+        workflowType === 'derive'
+          ? readRevisionId(context.data, 'target')
+          : workflowType === 'unbox'
+            ? readRevisionId(context.data, 'container')
+            : null;
+      if (parentRevisionId) {
+        relationActions.push(
+          fakeContainsAction(
+            'r1',
+            { refKind: 'existing_revision', ref: parentRevisionId },
+            { refKind: 'proposal', ref: nodeRef },
+          ),
+        );
+      }
+    }
     return {
       schemaVersion: 1,
       workflowType,
       summary: 'fake provider 生成的最小提案',
       nodeActions: [
         {
-          proposalRef: 'n1',
+          proposalRef: nodeRef,
           operation: 'create',
           logicalNodeId: null,
           baseRevisionId: null,
           nodeType: 'claim',
-          displayTitle: 'fake 候选命题',
+          displayTitle: isInitializeRoot ? 'fake 根命题' : 'fake 候选命题',
           contentText: '由 FakeModelProvider 生成，用于离线开发。',
-          roles: [],
-          attributes: {},
+          roles: isInitializeRoot ? ['root'] : [],
+          attributes: null,
           approvalSuggestion: 'tentative',
           epistemicState: 'assumed',
           rationale: 'fake provider 占位提案',
         },
       ],
-      relationActions: [],
+      relationActions,
       questionsForUser: [],
       warnings: ['当前使用 FakeModelProvider，输出不具设计价值'],
       stopReason: 'completed',
@@ -144,4 +177,58 @@ function defaultFakeValue(schemaName: string, input: string): unknown {
   throw modelError('MODEL_PROVIDER_FAILED', `未知 fake schema: ${schemaName}`, {
     retryable: false,
   });
+}
+
+interface FakeContext {
+  task: string | null;
+  data: Record<string, unknown>;
+}
+
+function parseContext(input: string): FakeContext {
+  try {
+    const parsed = JSON.parse(input) as { task?: unknown; data?: unknown };
+    return {
+      task: typeof parsed.task === 'string' ? parsed.task : null,
+      data:
+        parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)
+          ? (parsed.data as Record<string, unknown>)
+          : {},
+    };
+  } catch {
+    return { task: null, data: {} };
+  }
+}
+
+function readPriorNodeRefs(data: Record<string, unknown>): string[] {
+  const prior = data['priorStep'];
+  if (!prior || typeof prior !== 'object' || Array.isArray(prior)) return [];
+  const refs = (prior as Record<string, unknown>)['nodeRefs'];
+  if (!Array.isArray(refs)) return [];
+  return refs.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const ref = (entry as Record<string, unknown>)['proposalRef'];
+    return typeof ref === 'string' && ref.length > 0 ? [ref] : [];
+  });
+}
+
+function readRevisionId(data: Record<string, unknown>, key: string): string | null {
+  const value = data[key];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const revisionId = (value as Record<string, unknown>)['revisionId'];
+  return typeof revisionId === 'string' && revisionId.length > 0 ? revisionId : null;
+}
+
+function fakeContainsAction(ref: string, from: unknown, to: unknown): unknown {
+  return {
+    proposalRef: ref,
+    operation: 'create',
+    logicalRelationId: null,
+    baseRelationRevisionId: null,
+    relationType: 'contains',
+    from,
+    to,
+    rationale: 'fake provider 建立最小层级关系',
+    attributes: null,
+    approvalSuggestion: 'tentative',
+  };
 }

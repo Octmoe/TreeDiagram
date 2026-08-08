@@ -13,6 +13,8 @@ export interface StructuredGenerationRequest {
   input: string;
   outputSchemaName: string;
   outputSchema: TSchema;
+  /** 单次 Responses 输出硬上限，避免异常长生成无限占用运行时间。 */
+  maxOutputTokens?: number;
   reasoningEffort: 'low' | 'medium' | 'high';
   safetyIdentifier: string;
   /** Workflow cancel 立即 abort 当前请求（§12.2）。 */

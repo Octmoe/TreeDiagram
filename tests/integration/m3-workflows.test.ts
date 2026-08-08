@@ -8,6 +8,7 @@ import {
   INITIALIZE_EXTRACT_INSTRUCTIONS,
   INITIALIZE_ROOT_INSTRUCTIONS,
   modelError,
+  type ModelProvider,
   userAuthor,
 } from '@treediagram/core';
 import {
@@ -23,7 +24,7 @@ import {
  * 断点 resume 幂等、进程中断恢复、可用性规则。
  */
 
-function makeRunner(ws: TestWorkspace, provider: FakeModelProvider): CoreWorkflowRunner {
+function makeRunner(ws: TestWorkspace, provider: ModelProvider): CoreWorkflowRunner {
   return new CoreWorkflowRunner(ws.ctx, {
     provider,
     model: 'test-model',
@@ -44,7 +45,7 @@ function nodeAction(
     displayTitle: `节点 ${ref}`,
     contentText: `内容 ${ref}`,
     roles: overrides.roles ?? [],
-    attributes: {},
+    attributes: null,
     approvalSuggestion: overrides.approvalSuggestion ?? 'tentative',
     epistemicState: 'assumed',
     rationale: '测试 rationale',
@@ -61,7 +62,7 @@ function containsAction(ref: string, from: unknown, to: unknown) {
     from,
     to,
     rationale: '测试 rationale',
-    attributes: {},
+    attributes: null,
     approvalSuggestion: 'tentative',
   };
 }
@@ -107,7 +108,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
     );
     const provider = FakeModelProvider.scripted([
       // 第一步：提取非 root 候选
-      proposal([nodeAction('c1')], []),
+      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
       // 第二步：root 候选与矛盾（合并时 root 在前）
       proposal(
         [nodeAction('root1', { roles: ['root'] })],
@@ -118,6 +119,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
             { refKind: 'proposal', ref: 'c1' },
           ),
         ],
+        { workflowType: 'initialize' },
       ),
     ]);
     const runner = makeRunner(ws, provider);
@@ -159,9 +161,217 @@ describe('M3 initialize 工作流（§13.1）', () => {
     expect(summary.nodeActionCount).toBe(2);
     expect(summary.relationActionCount).toBe(1);
   });
+
+  it('开发 FakeProvider 可完成两阶段 initialize，并产出 root 与 contains', async () => {
+    const ws = makeTestWorkspace();
+    const source = ws.services.sources.addSource(
+      ws.project.id,
+      {
+        kind: 'text',
+        originalName: 'fake-input.txt',
+        mediaType: 'text/plain',
+        contentText: '离线开发模式输入',
+      },
+      userAuthor,
+    );
+    const provider = FakeModelProvider.forDevelopment();
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), {
+      workflowType: 'initialize',
+      targetNodeId: null,
+      changeSetId: null,
+      sourceAssetIds: [source.id],
+      focusInstruction: null,
+    });
+
+    const final = await runner.waitForCompletion(run.id);
+
+    expect(final.status).toBe('succeeded');
+    expect(provider.calls).toHaveLength(2);
+    const revisions = ws.db.repos.node
+      .listNodesByProject(ws.project.id)
+      .flatMap((node) => ws.db.repos.node.listRevisionsByNode(node.id));
+    expect(revisions.some((revision) => revision?.roles.includes('root'))).toBe(true);
+    expect(ws.db.repos.relation.listRelationsByProject(ws.project.id)).toHaveLength(1);
+  });
+
+  it('root 阶段失败后 resume 复用已持久化的 extract 提案，不重复调用第一阶段', async () => {
+    const ws = makeTestWorkspace();
+    const source = ws.services.sources.addSource(
+      ws.project.id,
+      {
+        kind: 'text',
+        originalName: 'resume.txt',
+        mediaType: 'text/plain',
+        contentText: '用于验证两阶段断点恢复',
+      },
+      userAuthor,
+    );
+    const provider = FakeModelProvider.scripted([
+      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
+      modelError('MODEL_PROVIDER_FAILED', 'root 阶段临时失败', { retryable: false }),
+      proposal(
+        [nodeAction('root1', { roles: ['root'] })],
+        [
+          containsAction(
+            'r1',
+            { refKind: 'proposal', ref: 'root1' },
+            { refKind: 'proposal', ref: 'c1' },
+          ),
+        ],
+        { workflowType: 'initialize' },
+      ),
+    ]);
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), {
+      workflowType: 'initialize',
+      targetNodeId: null,
+      changeSetId: null,
+      sourceAssetIds: [source.id],
+      focusInstruction: null,
+    });
+    const failed = await runner.waitForCompletion(run.id);
+    expect(failed.status).toBe('failed');
+    expect(provider.calls).toHaveLength(2);
+    expect(
+      (failed.checkpoint['modelCalls'] as Array<{ stage: string; status: string }>).map(
+        ({ stage, status }) => ({ stage, status }),
+      ),
+    ).toEqual([
+      { stage: 'initialize_extract', status: 'succeeded' },
+      { stage: 'initialize_root', status: 'failed' },
+    ]);
+
+    runner.resume(freshProject(ws), run.id);
+    const final = await runner.waitForCompletion(run.id);
+
+    expect(final.status).toBe('succeeded');
+    expect(provider.calls).toHaveLength(3);
+    expect(provider.calls[2]!.instructions).toBe(INITIALIZE_ROOT_INSTRUCTIONS);
+    expect(provider.calls[2]!.input).toContain('"proposalRef":"c1"');
+    expect(
+      (final.checkpoint['modelCalls'] as Array<{ stage: string; status: string }>).map(
+        ({ stage, status }) => ({ stage, status }),
+      ),
+    ).toEqual([
+      { stage: 'initialize_extract', status: 'succeeded' },
+      { stage: 'initialize_root', status: 'failed' },
+      { stage: 'initialize_root', status: 'succeeded' },
+    ]);
+  });
+
+  it('两阶段 initialize 汇总两次 provider token 用量', async () => {
+    const ws = makeTestWorkspace();
+    const source = ws.services.sources.addSource(
+      ws.project.id,
+      {
+        kind: 'text',
+        originalName: 'usage.txt',
+        mediaType: 'text/plain',
+        contentText: '用量汇总测试',
+      },
+      userAuthor,
+    );
+    const values = [
+      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
+      proposal([nodeAction('root1', { roles: ['root'] })], [], {
+        workflowType: 'initialize',
+      }),
+    ];
+    let callIndex = 0;
+    const provider: ModelProvider = {
+      providerName: 'usage-test',
+      async generateStructured<T>() {
+        const index = callIndex++;
+        const usage =
+          index === 0
+            ? { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+            : { inputTokens: 20, outputTokens: 3, totalTokens: 23 };
+        return {
+          value: values[index] as T,
+          providerResponseId: `usage-${index}`,
+          usage,
+        };
+      },
+    };
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), {
+      workflowType: 'initialize',
+      targetNodeId: null,
+      changeSetId: null,
+      sourceAssetIds: [source.id],
+      focusInstruction: null,
+    });
+
+    const final = await runner.waitForCompletion(run.id);
+
+    expect(final.status).toBe('succeeded');
+    expect(final.usage).toEqual({ inputTokens: 30, outputTokens: 5, totalTokens: 35 });
+    expect((final.checkpoint as { usage: unknown }).usage).toEqual(final.usage);
+  });
 });
 
 describe('M3 derive 工作流（§13.2）', () => {
+  it('provider 等待期间持久化脱敏调用轨迹，完成后补齐响应与用量', async () => {
+    const ws = makeTestWorkspace();
+    setConsistent(ws);
+    const secret = 'supersecretvalue123456';
+    const target = quickNode(ws, {
+      title: '轨迹测试目标',
+      content: `apiKey=${secret} ${'长上下文'.repeat(400)}`,
+    });
+    let releaseProvider!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    const provider: ModelProvider = {
+      providerName: 'trace-test',
+      async generateStructured<T>() {
+        await gate;
+        return {
+          value: proposal([nodeAction('trace-child')], []) as T,
+          providerResponseId: 'trace-response-1',
+          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        };
+      },
+    };
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), deriveRequest(target.node.id));
+
+    let running: WorkflowRun | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      running = ws.db.repos.workflowRun.getById(run.id);
+      if (running?.currentStep === 'running/generate/derive') break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(running?.currentStep).toBe('running/generate/derive');
+    const inFlightCalls = (running?.checkpoint['modelCalls'] ?? []) as Array<{
+      stage: string;
+      status: string;
+      request: { input: { text: string; truncated: boolean } };
+    }>;
+    expect(inFlightCalls).toHaveLength(1);
+    expect(inFlightCalls[0]).toMatchObject({ stage: 'derive', status: 'running' });
+    expect(inFlightCalls[0]!.request.input.text).toContain('[REDACTED]');
+    expect(inFlightCalls[0]!.request.input.text).not.toContain(secret);
+    expect(inFlightCalls[0]!.request.input.truncated).toBe(true);
+
+    releaseProvider();
+    const final = await runner.waitForCompletion(run.id);
+    const completedCalls = final.checkpoint['modelCalls'] as Array<{
+      status: string;
+      providerResponseId: string;
+      usage: Record<string, unknown>;
+      response: { text: string };
+    }>;
+    expect(completedCalls[0]).toMatchObject({
+      status: 'succeeded',
+      providerResponseId: 'trace-response-1',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    });
+    expect(completedCalls[0]!.response.text).toContain('trace-child');
+  });
+
   it('单次生成 → 应用 → succeeded；上下文含目标节点', async () => {
     const ws = makeTestWorkspace();
     setConsistent(ws);
@@ -226,6 +436,23 @@ describe('M3 derive 工作流（§13.2）', () => {
     expect(final.error?.code).toBe('MODEL_OUTPUT_INVALID');
   });
 
+  it('模型输出 workflowType 与实际运行不一致 → failed(MODEL_OUTPUT_INVALID)', async () => {
+    const ws = makeTestWorkspace();
+    setConsistent(ws);
+    const target = quickNode(ws);
+    const provider = FakeModelProvider.scripted([
+      proposal([nodeAction('c1')], [], { workflowType: 'grill' }),
+    ]);
+    const runner = makeRunner(ws, provider);
+
+    const run = runner.start(freshProject(ws), deriveRequest(target.node.id));
+    const final = await runner.waitForCompletion(run.id);
+
+    expect(final.status).toBe('failed');
+    expect(final.error?.code).toBe('MODEL_OUTPUT_INVALID');
+    expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(1);
+  });
+
   it('apply 失败后 resume 幂等：不重新生成、不重复建节点', async () => {
     const ws = makeTestWorkspace();
     setConsistent(ws);
@@ -272,10 +499,10 @@ describe('M3 derive 工作流（§13.2）', () => {
     );
     const runner = makeRunner(ws, hangingProvider);
     const run = runner.start(freshProject(ws), deriveRequest(target.node.id));
-    // 等待进入 running
+    // 等待请求真正发给 provider，确保取消轨迹可观测。
     for (let i = 0; i < 100; i += 1) {
       const current = ws.db.repos.workflowRun.getById(run.id);
-      if (current?.status === 'running') break;
+      if (current?.currentStep === 'running/generate/derive') break;
       await new Promise((r) => setTimeout(r, 10));
     }
     const cancelled = runner.cancel(freshProject(ws), run.id);
@@ -284,6 +511,9 @@ describe('M3 derive 工作流（§13.2）', () => {
     await new Promise((r) => setTimeout(r, 100));
     const after = ws.db.repos.workflowRun.getById(run.id);
     expect(after?.status).toBe('cancelled');
+    expect(
+      (after?.checkpoint['modelCalls'] as Array<{ status: string; error: { code: string } }>)[0],
+    ).toMatchObject({ status: 'cancelled', error: { code: 'MODEL_PROVIDER_FAILED' } });
   });
 
   it('进程中断恢复：遗留 running run 标记 failed(PROCESS_INTERRUPTED) 并可 resume', async () => {

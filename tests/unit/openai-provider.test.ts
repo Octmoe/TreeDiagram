@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { DomainError } from '@treediagram/core';
-import { classifyProviderError, extractProviderMessage } from '@treediagram/core';
+import {
+  classifyProviderError,
+  extractProviderMessage,
+  parseStructuredOutput,
+} from '@treediagram/core';
 
 /**
  * classifyProviderError / extractProviderMessage（openai-provider.ts）：
@@ -90,5 +94,37 @@ describe('classifyProviderError', () => {
     expect(err.code).toBe('MODEL_PROVIDER_FAILED');
     expect(err.message).toBe('provider 调用失败: fetch failed');
     expect(err.details['retryable']).toBe(true);
+  });
+});
+
+describe('OpenAIProvider 结构化输出包装兼容', () => {
+  const valid = (value: unknown) =>
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<string, unknown>)['ok'] === true;
+
+  it('解析纯 JSON 与 Markdown JSON fence', () => {
+    expect(parseStructuredOutput('{"ok":true}', valid).value).toEqual({ ok: true });
+    expect(parseStructuredOutput('```json\n{"ok":true}\n```', valid).value).toEqual({ ok: true });
+  });
+
+  it('从前后说明文字中提取完整对象，并正确处理字符串内花括号', () => {
+    const text = '以下是结果：\n{"ok":true,"text":"保留 {nested} 与 \\\"quote\\\""}\n完成。';
+    expect(parseStructuredOutput(text, valid).value).toEqual({
+      ok: true,
+      text: '保留 {nested} 与 "quote"',
+    });
+  });
+
+  it('多个对象候选时只选择通过 schema 闸门的对象', () => {
+    const result = parseStructuredOutput('说明 {"ok":false}\n最终 {"ok":true}', valid);
+    expect(result.value).toEqual({ ok: true });
+  });
+
+  it('没有完整 JSON 时报告 parsedAny=false', () => {
+    expect(parseStructuredOutput('```json\n{"ok":', valid)).toEqual({
+      value: undefined,
+      parsedAny: false,
+    });
   });
 });
