@@ -81,6 +81,11 @@ npm ci && npm start
 | **产出**       | root 角色候选（tentative）+ 普通候选 + contains 结构；未确认细节保留为 `assumed` |
 | **之后做什么** | 检查根部 → 把它 revise 成 `user_confirmed` → Adopt → 复核 → Publish Release 1    |
 
+> 注意：V1 的 UI 暂未提供 source 上传入口，Initialize 建议走 API 完成——
+> 先 `POST /api/v1/sources` 上传描述文本，再 `POST /api/v1/workflows`
+> （`workflowType: "initialize"`，`sourceAssetIds` 传入返回的 source id）。
+> UI 的 WorkflowPanel 也能启动 initialize，但会不带 source（不推荐）。
+
 ### 5.2 Derive — 顺向推导
 
 | 项             | 说明                                                      |
