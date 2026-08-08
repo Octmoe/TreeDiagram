@@ -41,7 +41,7 @@ npm ci && npm start
 2. 把 `<workspace>/.treediagram/model.json` 配上 API key（见 README「模型配置」），
    或先用 `npm start -- --fake` 离线体验；
 3. 打开 `http://127.0.0.1:4317/`，粘贴 **admin token** 进入编辑器；
-4. 上传一份描述想法的 source（见 §5.1），跑 **Initialize**；
+4. 在 WorkflowPanel 选择 `initialize`，多选上传描述想法的 source 文件（可追加/移除），点「启动」；
 5. 确认根部 → Adopt → 复核 → Publish，得到 Release 1。
 
 ## 4. 编辑器界面导览
@@ -81,10 +81,9 @@ npm ci && npm start
 | **产出**       | root 角色候选（tentative）+ 普通候选 + contains 结构；未确认细节保留为 `assumed` |
 | **之后做什么** | 检查根部 → 把它 revise 成 `user_confirmed` → Adopt → 复核 → Publish Release 1    |
 
-> 注意：V1 的 UI 暂未提供 source 上传入口，Initialize 建议走 API 完成——
-> 先 `POST /api/v1/sources` 上传描述文本，再 `POST /api/v1/workflows`
-> （`workflowType: "initialize"`，`sourceAssetIds` 传入返回的 source id）。
-> UI 的 WorkflowPanel 也能启动 initialize，但会不带 source（不推荐）。
+> UI 入口：WorkflowPanel 选择 `initialize` 后出现 source 暂存区——可多次多选追加
+> markdown/纯文本文件、在列表中查看并移除（同名同大小自动去重）；启动时逐个上传
+> 并以 `sourceAssetIds` 启动。空列表启动会被客户端拦截提示。
 
 ### 5.2 Derive — 顺向推导
 

@@ -239,6 +239,7 @@ button.danger {
 .relation-list,
 .history-list,
 .run-list,
+.staged-source-list,
 .review-items ul {
   list-style: none;
   padding: 0;
@@ -246,7 +247,8 @@ button.danger {
 
 .relation-list li,
 .review-item,
-.run-list li {
+.run-list li,
+.staged-source-list li {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px;
@@ -255,6 +257,28 @@ button.danger {
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.source-staging {
+  margin-top: 8px;
+}
+
+.source-staging label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.source-staging input[type='file'] {
+  display: block;
+  margin-top: 4px;
+}
+
+.staged-source-name {
+  flex: 1;
+  min-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .relation-endpoint {
