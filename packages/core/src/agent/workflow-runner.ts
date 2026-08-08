@@ -452,12 +452,14 @@ export class CoreWorkflowRunner {
     }
     this.abortControllers.get(runId)?.abort();
     const now = this.clock.now();
-    this.db.repos.workflowInteraction.cancelOpenWaits(runId, now);
-    this.db.repos.workflowRun.update(
-      runId,
-      { status: 'cancelled', currentStep: 'cancelled', finishedAt: now },
-      now,
-    );
+    this.db.transaction(() => {
+      this.db.repos.workflowInteraction.cancelOpenWaits(runId, now);
+      this.db.repos.workflowRun.update(
+        runId,
+        { status: 'cancelled', currentStep: 'cancelled', finishedAt: now },
+        now,
+      );
+    });
     return this.requireRun(project, runId);
   }
 
@@ -484,7 +486,12 @@ export class CoreWorkflowRunner {
   }
 
   private kick(runId: string): void {
-    if (this.executing.has(runId)) return;
+    if (this.executing.has(runId)) {
+      // waiting_user 刚被观察到时，上一执行协程可能尚未跑到 finally。
+      // 延后一拍重试，避免 respond 已把状态置 queued 却漏掉新的执行调度。
+      setImmediate(() => this.kick(runId));
+      return;
+    }
     this.executing.add(runId);
     setImmediate(() => {
       void this.execute(runId).finally(() => {
@@ -794,14 +801,7 @@ export class CoreWorkflowRunner {
             assertProposalWorkflowType('initialize', first.value);
             checkpoint.providerResponseId = first.providerResponseId;
             checkpoint.usage = addModelUsage(null, first.usage);
-            if (
-              this.pauseForClarification(
-                run.id,
-                checkpoint,
-                'initialize_extract',
-                first.value,
-              )
-            ) {
+            if (this.pauseForClarification(run.id, checkpoint, 'initialize_extract', first.value)) {
               return;
             }
             firstProposal = first.value;
@@ -838,9 +838,7 @@ export class CoreWorkflowRunner {
             assertProposalWorkflowType('initialize', second.value);
             checkpoint.providerResponseId = second.providerResponseId;
             checkpoint.usage = addModelUsage(checkpoint.usage, second.usage);
-            if (
-              this.pauseForClarification(run.id, checkpoint, 'initialize_root', second.value)
-            ) {
+            if (this.pauseForClarification(run.id, checkpoint, 'initialize_root', second.value)) {
               return;
             }
             secondProposal = second.value;

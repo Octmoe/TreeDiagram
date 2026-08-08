@@ -270,6 +270,106 @@ describe('M1 工作区重开恢复', () => {
       second.db.close();
     }
   });
+
+  it('waiting_user 对话跨进程重开后仍可回答并恢复同一阶段', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'treediagram-conversation-reopen-'));
+    tmpDirs.push(dir);
+    const workspaceService = new WorkspaceService(systemClock);
+    workspaceService.initWorkspace(dir, 'conversation-reopen');
+
+    const first = workspaceService.openWorkspace(dir);
+    const firstProject = first.db.repos.project.requireSingleton();
+    const target = new NodeService({ db: first.db, clock: systemClock }).createCandidateNode(
+      firstProject,
+      'claim',
+      {
+        displayTitle: '对话恢复目标',
+        contentText: '目标',
+        roles: [],
+        attributes: {},
+        approvalState: 'draft',
+        epistemicState: 'assumed',
+      },
+      userAuthor,
+    );
+    first.db.repos.project.updateStatus(firstProject.id, 'consistent', null, systemClock.now());
+    const firstProvider = FakeModelProvider.scripted([
+      {
+        schemaVersion: 1,
+        workflowType: 'derive',
+        summary: '需要用户补充边界',
+        nodeActions: [],
+        relationActions: [],
+        questionsForUser: [{ question: '允许联网吗？', blocking: true, relatedProposalRefs: [] }],
+        warnings: [],
+        stopReason: 'needs_user',
+      },
+    ]);
+    const firstRunner = new CoreWorkflowRunner(
+      { db: first.db, clock: systemClock },
+      { provider: firstProvider, model: 'test-model', safetyIdentifier: 'a'.repeat(32) },
+    );
+    const started = firstRunner.start(first.db.repos.project.requireSingleton(), {
+      workflowType: 'derive',
+      targetNodeId: target.node.id,
+      changeSetId: null,
+      sourceAssetIds: [],
+      focusInstruction: null,
+    });
+    expect((await firstRunner.waitForCompletion(started.id)).status).toBe('waiting_user');
+    const waitId = first.db.repos.workflowInteraction.getOpenWait(started.id)!.id;
+    first.db.close();
+
+    const second = workspaceService.openWorkspace(dir);
+    try {
+      const secondProvider = FakeModelProvider.scripted([
+        {
+          schemaVersion: 1,
+          workflowType: 'derive',
+          summary: '已根据回答完成',
+          nodeActions: [
+            {
+              proposalRef: 'c1',
+              operation: 'create',
+              logicalNodeId: null,
+              baseRevisionId: null,
+              nodeType: 'claim',
+              displayTitle: '离线约束下的方案',
+              contentText: '不联网',
+              roles: [],
+              attributes: null,
+              approvalSuggestion: 'tentative',
+              epistemicState: 'assumed',
+              rationale: '来自用户回答',
+            },
+          ],
+          relationActions: [],
+          questionsForUser: [],
+          warnings: [],
+          stopReason: 'completed',
+        },
+      ]);
+      const secondRunner = new CoreWorkflowRunner(
+        { db: second.db, clock: systemClock },
+        { provider: secondProvider, model: 'test-model', safetyIdentifier: 'b'.repeat(32) },
+      );
+      const project = second.db.repos.project.requireSingleton();
+      expect(second.db.repos.workflowInteraction.listMessages(started.id)).toHaveLength(1);
+      secondRunner.respond(project, started.id, {
+        waitId,
+        clientMessageId: asId(randomUUID()),
+        message: '不允许联网，所有能力必须本地运行。',
+        answers: [],
+        sourceAssetIds: [],
+      });
+      const final = await secondRunner.waitForCompletion(started.id);
+      expect(final.status).toBe('succeeded');
+      expect(secondProvider.calls[0]!.input).toContain('不允许联网');
+      expect(second.db.repos.workflowInteraction.listMessages(started.id)).toHaveLength(2);
+    } finally {
+      second.db.close();
+    }
+  });
 });
 
 describe('M1 seeded fixture: Release 1 -> candidate -> Release 2', () => {

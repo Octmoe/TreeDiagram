@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { asId, type ReviewItem, type StartWorkflowRequest } from '@treediagram/contracts';
 import { CoreWorkflowRunner, DomainError, FakeModelProvider, userAuthor } from '@treediagram/core';
 import {
@@ -203,6 +204,58 @@ describe('M5 reevaluate 工作流（§13.5）', () => {
     );
     expect(release2.version).toBe(2);
     expect(release2.nodeRevisionIds).toContain(newARevisionId);
+  });
+
+  it('批次提出澄清时不应用当前批次，回答后重新生成并裁决', async () => {
+    const ws = makeTestWorkspace();
+    const base = publishBaseline(ws);
+    const { oldARevisionId, newARevisionId } = adoptRevisionOfA(ws, base);
+    const changeSet = ws.services.changeSets.getLive(freshProject(ws))!;
+    let call = 0;
+    const provider = new FakeModelProvider((req) => {
+      call += 1;
+      const result = allValidWithMigration(req.input, oldARevisionId, newARevisionId);
+      if (call === 1) {
+        const interactive = result as unknown as {
+          questionsForUser: Array<{
+            question: string;
+            blocking: boolean;
+            relatedProposalRefs: string[];
+          }>;
+          stopReason: string;
+        };
+        interactive.questionsForUser = [
+          { question: '修改后的 A 是否仍满足离线约束？', blocking: true, relatedProposalRefs: [] },
+        ];
+        interactive.stopReason = 'needs_user';
+      }
+      return result;
+    });
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), reevaluateRequest(changeSet.id));
+    const waiting = await runner.waitForCompletion(run.id);
+
+    expect(waiting.status).toBe('waiting_user');
+    const before = ws.db.repos.reviewItem.countsByChangeSet(changeSet.id);
+    expect(before.resolved).toBe(0);
+    expect(before.blocked).toBe(0);
+    expect(waiting.checkpoint['pendingBatch']).toBeFalsy();
+    const wait = ws.db.repos.workflowInteraction.getOpenWait(run.id)!;
+    runner.respond(freshProject(ws), run.id, {
+      waitId: wait.id,
+      clientMessageId: asId(randomUUID()),
+      message: '是，A 的新修订仍然完全离线。',
+      answers: [],
+      sourceAssetIds: [],
+    });
+
+    const final = await runner.waitForCompletion(run.id);
+    expect(final.status).toBe('succeeded');
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[1]!.input).toContain('仍然完全离线');
+    const after = ws.db.repos.reviewItem.countsByChangeSet(changeSet.id);
+    expect(after.pending).toBe(0);
+    expect(after.blocked).toBe(0);
   });
 
   it('unknown → item blocked → run waiting_user；用户裁决后 resume → succeeded', async () => {
