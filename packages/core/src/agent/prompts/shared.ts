@@ -17,6 +17,10 @@ export const SHARED_RULES = `硬规则（必须全部遵守）：
 - epistemicState 仅 claim/constraint/risk 三类节点可输出具体值；其余节点类型必须输出 null。
 - attributes：topic/claim/option 节点与非 contradicts 关系没有属性，attributes 输出 null
   （服务端会归一为空对象）；其余类型按各自属性结构输出完整对象。
+- data.workflowConversation（若存在）是本次 Workflow 已持久化的 Agent/用户澄清记录；
+  必须结合其中最新用户回答继续当前阶段，已回答的问题不得机械重复询问。
+- 如果缺少关键信息：stopReason 输出 needs_user 或 insufficient_context，questionsForUser 至少一项，
+  且 nodeActions/relationActions 必须为空；信息足够后 stopReason=completed、questionsForUser 为空。
 
 输出语义：
 - proposalRef 是你为每个提案分配的唯一临时引用（如 "n1"、"r1"），同一输出内不得重复。

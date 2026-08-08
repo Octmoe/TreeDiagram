@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   ReviewItem,
+  RespondWorkflowRequest,
   StartWorkflowRequest,
+  WorkflowMessage,
   WorkflowRun,
   WorkflowType,
 } from '@treediagram/contracts';
@@ -82,6 +84,8 @@ interface RunCheckpoint {
     itemIds: string[];
     applied: { nodeRevisionIds: string[]; relationRevisionIds: string[] } | null;
   }>;
+  /** 当前因澄清而暂停的模型阶段；回答后重跑同一阶段。 */
+  awaitingStage?: string | null;
 }
 
 interface TracePreview {
@@ -327,6 +331,13 @@ export class CoreWorkflowRunner {
     }
     const checkpoint = checkpointOf(run);
     if (run.status === 'waiting_user') {
+      if (this.db.repos.workflowInteraction.getOpenWait(run.id)) {
+        throw new DomainError(
+          'WORKFLOW_NOT_RESUMABLE',
+          '当前工作流正在等待用户回答，请使用 respond 接口提交消息',
+          { runId: run.id },
+        );
+      }
       // 用户已阅读问题并选择继续；proposal 已应用，直接收尾。
       if (checkpoint.applied) {
         const now = this.clock.now();
@@ -352,6 +363,85 @@ export class CoreWorkflowRunner {
     return this.requireRun(project, runId);
   }
 
+  /** 失败恢复与用户回答恢复分离；retry 仅接受 failed。 */
+  retry(project: ProjectRecord, runId: string): WorkflowRun {
+    const run = this.requireRun(project, runId);
+    if (run.status !== 'failed') {
+      throw new DomainError('WORKFLOW_NOT_RESUMABLE', `状态 ${run.status} 不可重试`, {
+        status: run.status,
+      });
+    }
+    return this.resume(project, runId);
+  }
+
+  /**
+   * 回答开放澄清并恢复同一模型阶段。消息与 waiting_user -> queued 在同一事务提交，
+   * clientMessageId 保证网络重试不会重复触发模型或创建重复消息。
+   */
+  respond(project: ProjectRecord, runId: string, input: RespondWorkflowRequest): WorkflowRun {
+    const existing = this.db.repos.workflowInteraction.getByClientMessageId(
+      runId,
+      input.clientMessageId,
+    );
+    if (existing) return this.requireRun(project, runId);
+
+    const run = this.requireRun(project, runId);
+    if (run.status !== 'waiting_user') {
+      throw new DomainError('WORKFLOW_NOT_RESUMABLE', `状态 ${run.status} 不接受用户回答`, {
+        status: run.status,
+      });
+    }
+    const wait = this.db.repos.workflowInteraction.getOpenWait(run.id);
+    if (!wait || wait.id !== input.waitId) {
+      throw new DomainError('WORKFLOW_NOT_RESUMABLE', '回答对应的等待已失效', {
+        requestedWaitId: input.waitId,
+        openWaitId: wait?.id ?? null,
+      });
+    }
+    const promptMessage = this.db.repos.workflowInteraction.getMessage(wait.messageId);
+    if (!promptMessage) {
+      throw new DomainError('CORRUPT_PERSISTED_DATA', '开放等待对应的 Agent 消息缺失', {
+        waitId: wait.id,
+      });
+    }
+    const questionIds = new Set(promptMessage.questions.map((question) => question.id));
+    const answerIds = new Set<string>();
+    for (const answer of input.answers) {
+      if (!questionIds.has(answer.questionId) || answerIds.has(answer.questionId)) {
+        throw new DomainError('VALIDATION_FAILED', '回答包含未知或重复的问题 ID', {
+          questionId: answer.questionId,
+        });
+      }
+      answerIds.add(answer.questionId);
+    }
+    const sourceAssetIds = input.sourceAssetIds.map((id) => {
+      const asset = this.db.repos.sourceAsset.getById(id);
+      if (!asset || asset.projectId !== project.id) {
+        throw new DomainError('NOT_FOUND', '回答附件不存在', { sourceAssetId: id });
+      }
+      return asset.id;
+    });
+    const now = this.clock.now();
+    this.db.transaction(() => {
+      this.db.repos.workflowInteraction.appendUserResponse({
+        runId: run.id,
+        wait,
+        clientMessageId: input.clientMessageId,
+        contentText: input.message,
+        answers: input.answers,
+        sourceAssetIds,
+        now,
+      });
+      this.db.repos.workflowRun.update(
+        run.id,
+        { status: 'queued', currentStep: 'queued', error: null, finishedAt: null },
+        now,
+      );
+    });
+    this.kick(run.id);
+    return this.requireRun(project, runId);
+  }
+
   /** 取消：abort 在途请求；已成功写入 ChangeSet 的提案不回滚（§14.5）。 */
   cancel(project: ProjectRecord, runId: string): WorkflowRun {
     const run = this.requireRun(project, runId);
@@ -362,6 +452,7 @@ export class CoreWorkflowRunner {
     }
     this.abortControllers.get(runId)?.abort();
     const now = this.clock.now();
+    this.db.repos.workflowInteraction.cancelOpenWaits(runId, now);
     this.db.repos.workflowRun.update(
       runId,
       { status: 'cancelled', currentStep: 'cancelled', finishedAt: now },
@@ -486,6 +577,105 @@ export class CoreWorkflowRunner {
     }
   }
 
+  /**
+   * 把模型的澄清请求持久化为真正的对话等待。询问回合不保存为可应用 proposal，
+   * 回答后由同一阶段基于原始上下文 + 完整对话重新生成。
+   */
+  private pauseForClarification(
+    runId: WorkflowRunId,
+    checkpoint: RunCheckpoint,
+    stage: string,
+    rawResult: unknown,
+  ): boolean {
+    const result = rawResult as {
+      summary: string;
+      stopReason: string;
+      questionsForUser: Array<{
+        question: string;
+        blocking: boolean;
+        relatedProposalRefs: string[];
+      }>;
+    };
+    const needsUser = result.questionsForUser.length > 0 || result.stopReason !== 'completed';
+    if (!needsUser) return false;
+    const questions =
+      result.questionsForUser.length > 0
+        ? result.questionsForUser
+        : [
+            {
+              question: '当前信息不足以继续，请补充本任务的目标、边界或关键约束。',
+              blocking: true,
+              relatedProposalRefs: [],
+            },
+          ];
+    checkpoint.awaitingStage = stage;
+    const now = this.clock.now();
+    const interaction = this.db.transaction(() => {
+      const created = this.db.repos.workflowInteraction.createAgentWait(
+        runId,
+        result.summary,
+        questions,
+        now,
+      );
+      this.db.repos.workflowRun.update(
+        runId,
+        {
+          status: 'waiting_user',
+          currentStep: 'waiting_user',
+          checkpoint: checkpoint as unknown as Record<string, unknown>,
+          summary: {
+            summary: result.summary,
+            stopReason: result.stopReason,
+            waitId: created.wait.id,
+            questionsForUser: created.message.questions,
+          },
+          finishedAt: null,
+        },
+        now,
+      );
+      return created;
+    });
+    return interaction.wait.status === 'open';
+  }
+
+  /** 对话是 data 下的不可信任务输入，不依赖 provider 会话，进程重启后可完整重放。 */
+  private attachConversation(
+    runId: WorkflowRunId,
+    context: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const messages = this.db.repos.workflowInteraction.listMessages(runId);
+    if (messages.length === 0) return context;
+    const conversation = messages.map((message: WorkflowMessage) => ({
+      messageId: message.id,
+      sequence: message.sequence,
+      role: message.role,
+      contentText: message.contentText,
+      questions: message.questions,
+      answers: message.answers,
+      attachments: message.sourceAssetIds.map((sourceAssetId) => {
+        const asset = this.db.repos.sourceAsset.getById(sourceAssetId);
+        if (!asset) {
+          throw new DomainError('CORRUPT_PERSISTED_DATA', '对话附件对应的 source 缺失', {
+            sourceAssetId,
+          });
+        }
+        return {
+          sourceAssetId: asset.id,
+          kind: asset.kind,
+          originalName: asset.originalName,
+          contentText: asset.contentText,
+        };
+      }),
+    }));
+    return {
+      ...context,
+      data: {
+        ...((context['data'] as Record<string, unknown> | undefined) ?? {}),
+        workflowConversation: conversation,
+      },
+    };
+  }
+
   /** 取消检查：步骤之间调用；已取消时抛出（中断执行）。 */
   private assertNotCancelled(runId: string): WorkflowRun {
     const run = this.db.repos.workflowRun.getById(runId);
@@ -572,6 +762,8 @@ export class CoreWorkflowRunner {
             ? buildGrillContext(ws, targetNodeId, focusInstruction)
             : buildDeriveContext(ws, targetNodeId, focusInstruction);
       }
+      context = this.attachConversation(run.id, context);
+      checkpoint.awaitingStage = null;
       checkpoint.contextHash = sha256Hex(JSON.stringify(context));
       checkpoint.steps.push('load_context');
       run = this.patch(runId, {
@@ -600,10 +792,20 @@ export class CoreWorkflowRunner {
             });
             this.assertNotCancelled(runId);
             assertProposalWorkflowType('initialize', first.value);
-            firstProposal = first.value;
-            checkpoint.proposals = [firstProposal];
             checkpoint.providerResponseId = first.providerResponseId;
             checkpoint.usage = addModelUsage(null, first.usage);
+            if (
+              this.pauseForClarification(
+                run.id,
+                checkpoint,
+                'initialize_extract',
+                first.value,
+              )
+            ) {
+              return;
+            }
+            firstProposal = first.value;
+            checkpoint.proposals = [firstProposal];
             checkpoint.steps.push('generate_extract');
             run = this.patch(runId, {
               checkpoint: checkpoint as unknown as Record<string, unknown>,
@@ -634,10 +836,15 @@ export class CoreWorkflowRunner {
             });
             this.assertNotCancelled(runId);
             assertProposalWorkflowType('initialize', second.value);
-            secondProposal = second.value;
-            checkpoint.proposals = [firstProposal, secondProposal];
             checkpoint.providerResponseId = second.providerResponseId;
             checkpoint.usage = addModelUsage(checkpoint.usage, second.usage);
+            if (
+              this.pauseForClarification(run.id, checkpoint, 'initialize_root', second.value)
+            ) {
+              return;
+            }
+            secondProposal = second.value;
+            checkpoint.proposals = [firstProposal, secondProposal];
             checkpoint.steps.push('generate_root');
           } else {
             assertProposalWorkflowType('initialize', secondProposal);
@@ -665,9 +872,12 @@ export class CoreWorkflowRunner {
             safetyIdentifier: this.config.safetyIdentifier,
             signal: controller.signal,
           });
-          checkpoint.proposal = result.value;
           checkpoint.providerResponseId = result.providerResponseId;
           checkpoint.usage = result.usage as unknown as Record<string, unknown>;
+          if (this.pauseForClarification(run.id, checkpoint, run.workflowType, result.value)) {
+            return;
+          }
+          checkpoint.proposal = result.value;
         }
         checkpoint.steps.push('generate');
         run = this.patch(runId, {
@@ -866,11 +1076,13 @@ export class CoreWorkflowRunner {
       let batchState = checkpoint.pendingBatch ?? null;
       if (!batchState || !sameIds(batchState.itemIds, batchIds)) {
         const roots: ReturnType<typeof this.reevaluationRoots> = this.reevaluationRoots(working);
-        const context = buildReevaluationContext(
+        let context = buildReevaluationContext(
           changeSet.id,
           roots,
           batch.map((item) => this.reevaluationItemView(item)),
         );
+        context = this.attachConversation(run.id, context);
+        checkpoint.awaitingStage = null;
         checkpoint.contextHash = sha256Hex(JSON.stringify(context));
         const batchNumber = (checkpoint.batches?.length ?? 0) + 1;
         const generated = await this.generateWithTrace(
@@ -891,10 +1103,20 @@ export class CoreWorkflowRunner {
         );
         this.assertNotCancelled(runId);
         this.validateBatchResult(batch, generated.value);
-        batchState = { itemIds: batchIds, result: generated.value, applied: null };
-        checkpoint.pendingBatch = batchState;
         checkpoint.providerResponseId = generated.providerResponseId;
         checkpoint.usage = generated.usage as unknown as Record<string, unknown>;
+        if (
+          this.pauseForClarification(
+            run.id,
+            checkpoint,
+            `reevaluate_batch_${batchNumber}`,
+            generated.value,
+          )
+        ) {
+          return;
+        }
+        batchState = { itemIds: batchIds, result: generated.value, applied: null };
+        checkpoint.pendingBatch = batchState;
         checkpoint.steps.push('generate_batch');
         patchCheckpoint('running/apply_proposal');
       }

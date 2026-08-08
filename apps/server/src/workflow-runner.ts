@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { StartWorkflowRequest, WorkflowRun } from '@treediagram/contracts';
+import type {
+  RespondWorkflowRequest,
+  StartWorkflowRequest,
+  WorkflowRun,
+} from '@treediagram/contracts';
 import {
   CoreWorkflowRunner,
   DomainError,
@@ -19,6 +23,12 @@ import type { ServerConfig } from './config.js';
 export interface WorkflowRunner {
   start(project: ProjectRecord, input: StartWorkflowRequest): WorkflowRun | Promise<WorkflowRun>;
   resume(project: ProjectRecord, runId: string): WorkflowRun | Promise<WorkflowRun>;
+  retry(project: ProjectRecord, runId: string): WorkflowRun | Promise<WorkflowRun>;
+  respond(
+    project: ProjectRecord,
+    runId: string,
+    input: RespondWorkflowRequest,
+  ): WorkflowRun | Promise<WorkflowRun>;
   cancel(project: ProjectRecord, runId: string): WorkflowRun | Promise<WorkflowRun>;
 }
 
@@ -30,6 +40,18 @@ export const unconfiguredWorkflowRunner: WorkflowRunner = {
     );
   },
   resume(): never {
+    throw new DomainError(
+      'MODEL_NOT_CONFIGURED',
+      '尚未配置模型提供方：请配置 .treediagram/model.json、设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',
+    );
+  },
+  retry(): never {
+    throw new DomainError(
+      'MODEL_NOT_CONFIGURED',
+      '尚未配置模型提供方：请配置 .treediagram/model.json、设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',
+    );
+  },
+  respond(): never {
     throw new DomainError(
       'MODEL_NOT_CONFIGURED',
       '尚未配置模型提供方：请配置 .treediagram/model.json、设置 OPENAI_API_KEY，或开发模式下设置 TREEDIAGRAM_MODEL_PROVIDER=fake',

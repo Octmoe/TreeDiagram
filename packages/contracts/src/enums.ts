@@ -75,6 +75,15 @@ export const WORKFLOW_RUN_STATUSES = [
 ] as const;
 export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
 
+export const WORKFLOW_MESSAGE_ROLES = ['agent', 'user', 'system'] as const;
+export type WorkflowMessageRole = (typeof WORKFLOW_MESSAGE_ROLES)[number];
+
+export const WORKFLOW_MESSAGE_KINDS = ['clarification', 'response', 'notice'] as const;
+export type WorkflowMessageKind = (typeof WORKFLOW_MESSAGE_KINDS)[number];
+
+export const WORKFLOW_WAIT_STATUSES = ['open', 'answered', 'cancelled'] as const;
+export type WorkflowWaitStatus = (typeof WORKFLOW_WAIT_STATUSES)[number];
+
 export const DELEGATION_MODES = ['human_final', 'ai_managed'] as const;
 export type DelegationMode = (typeof DELEGATION_MODES)[number];
 

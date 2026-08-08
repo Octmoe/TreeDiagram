@@ -9,7 +9,7 @@ export interface AppliedMigration {
 }
 
 /** 当前程序支持的最高 schema 版本。 */
-export const SUPPORTED_SCHEMA_VERSION = 1;
+export const SUPPORTED_SCHEMA_VERSION = 2;
 
 function migrationsDir(): string {
   // dist/db/migrate.js -> ../../migrations；src/db/migrate.ts 同样成立。

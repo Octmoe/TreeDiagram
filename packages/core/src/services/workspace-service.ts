@@ -10,7 +10,7 @@ import type { ProjectRecord } from '../db/repositories/project.js';
 import { newId } from '../ids.js';
 
 export const WORKSPACE_DIR_NAME = '.treediagram';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface WorkspaceMeta {
   workspaceId: string;

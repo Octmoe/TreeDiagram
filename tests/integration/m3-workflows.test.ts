@@ -162,6 +162,88 @@ describe('M3 initialize 工作流（§13.1）', () => {
     expect(summary.relationActionCount).toBe(1);
   });
 
+  it('模糊 source 在 extract 阶段先对话澄清，回答后才生成并一次应用完整提案', async () => {
+    const ws = makeTestWorkspace();
+    const source = ws.services.sources.addSource(
+      ws.project.id,
+      {
+        kind: 'text',
+        originalName: '开始点.txt',
+        mediaType: 'text/plain',
+        contentText: '一套给 ai agent 使用的程序化建模工具集',
+      },
+      userAuthor,
+    );
+    const provider = FakeModelProvider.scripted([
+      proposal([nodeAction('guess')], [], {
+        workflowType: 'initialize',
+        summary: '需要先确认建模领域。',
+        questionsForUser: [
+          {
+            question: '建模对象与使用形态是什么？',
+            blocking: true,
+            relatedProposalRefs: ['guess'],
+          },
+        ],
+        stopReason: 'insufficient_context',
+      }),
+      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
+      proposal(
+        [nodeAction('root1', { roles: ['root'] })],
+        [
+          containsAction(
+            'root-rel1',
+            { refKind: 'proposal', ref: 'root1' },
+            { refKind: 'proposal', ref: 'c1' },
+          ),
+        ],
+        { workflowType: 'initialize' },
+      ),
+    ]);
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), {
+      workflowType: 'initialize',
+      targetNodeId: null,
+      changeSetId: null,
+      sourceAssetIds: [source.id],
+      focusInstruction: null,
+    });
+
+    const waiting = await runner.waitForCompletion(run.id);
+    expect(waiting.status).toBe('waiting_user');
+    expect(provider.calls).toHaveLength(1);
+    expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(0);
+    const openWait = ws.db.repos.workflowInteraction.getOpenWait(run.id)!;
+    const clientMessageId = asId(randomUUID());
+    const response = {
+      waitId: openWait.id,
+      clientMessageId,
+      message: '面向软件架构图，通过本地 TypeScript API 供 agent 创建和修改模型。',
+      answers: [],
+      sourceAssetIds: [],
+    };
+    runner.respond(freshProject(ws), run.id, response);
+    // 同一 clientMessageId 的网络重试幂等，不创建第二条消息或第二次恢复。
+    runner.respond(freshProject(ws), run.id, response);
+    expect(() =>
+      runner.respond(freshProject(ws), run.id, {
+        ...response,
+        clientMessageId: asId(randomUUID()),
+      }),
+    ).toThrowError(/不接受用户回答/);
+
+    const final = await runner.waitForCompletion(run.id);
+    expect(final.status).toBe('succeeded');
+    expect(provider.calls).toHaveLength(3);
+    expect(provider.calls[1]!.instructions).toBe(INITIALIZE_EXTRACT_INSTRUCTIONS);
+    expect(provider.calls[1]!.input).toContain('面向软件架构图');
+    expect(provider.calls[2]!.instructions).toBe(INITIALIZE_ROOT_INSTRUCTIONS);
+    expect(ws.db.repos.workflowInteraction.listMessages(run.id)).toHaveLength(2);
+    expect(ws.db.repos.workflowInteraction.getOpenWait(run.id)).toBeNull();
+    expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(2);
+    expect(ws.db.repos.relation.listRelationsByProject(ws.project.id)).toHaveLength(1);
+  });
+
   it('开发 FakeProvider 可完成两阶段 initialize，并产出 root 与 contains', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(
@@ -399,7 +481,7 @@ describe('M3 derive 工作流（§13.2）', () => {
     expect(nodes).toHaveLength(2);
   });
 
-  it('blocking 问题 → waiting_user；resume 后 succeeded 且不重新生成', async () => {
+  it('blocking 问题 → 不应用提案并持久等待；用户回答后重跑同一阶段', async () => {
     const ws = makeTestWorkspace();
     setConsistent(ws);
     const target = quickNode(ws);
@@ -409,19 +491,34 @@ describe('M3 derive 工作流（§13.2）', () => {
           { question: '这个分支要继续吗？', blocking: true, relatedProposalRefs: ['c1'] },
         ],
       }),
+      proposal([nodeAction('c2')], []),
     ]);
     const runner = makeRunner(ws, provider);
     const run = runner.start(freshProject(ws), deriveRequest(target.node.id));
     const waiting = await runner.waitForCompletion(run.id);
     expect(waiting.status).toBe('waiting_user');
     expect(waiting.finishedAt).toBeNull();
-    // 提案已应用
-    expect(ws.db.repos.node.listNodesByProject(ws.project.id).length).toBe(2);
+    // 询问回合没有把基于模糊输入的 c1 写入 ChangeSet。
+    expect(ws.db.repos.node.listNodesByProject(ws.project.id).length).toBe(1);
+    const conversation = ws.db.repos.workflowInteraction.listMessages(run.id);
+    const wait = ws.db.repos.workflowInteraction.getOpenWait(run.id)!;
+    expect(conversation).toHaveLength(1);
+    expect(conversation[0]?.questions[0]?.question).toBe('这个分支要继续吗？');
+    expect(() => runner.resume(freshProject(ws), run.id)).toThrowError(/respond/);
 
-    const resumed = runner.resume(freshProject(ws), run.id);
+    runner.respond(freshProject(ws), run.id, {
+      waitId: wait.id,
+      clientMessageId: asId(randomUUID()),
+      message: '继续，但只设计本地离线分支。',
+      answers: [],
+      sourceAssetIds: [],
+    });
+    const resumed = await runner.waitForCompletion(run.id);
     expect(resumed.status).toBe('succeeded');
     expect(resumed.finishedAt).not.toBeNull();
-    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[1]!.input).toContain('继续，但只设计本地离线分支');
+    expect(ws.db.repos.node.listNodesByProject(ws.project.id).length).toBe(2);
   });
 
   it('模型输出不合法 → failed(MODEL_OUTPUT_INVALID)', async () => {

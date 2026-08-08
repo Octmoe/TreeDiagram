@@ -3,11 +3,14 @@ import { Type } from '@sinclair/typebox';
 import {
   IdParamsSchema,
   Nullable,
+  RespondWorkflowRequestSchema,
   StartWorkflowRequestSchema,
+  WorkflowConversationSchema,
   WorkflowListQuerySchema,
   WorkflowRunSchema,
   type IdParams,
   type StartWorkflowRequest,
+  type RespondWorkflowRequest,
   type WorkflowListQuery,
 } from '@treediagram/contracts';
 import { DomainError } from '@treediagram/core';
@@ -74,6 +77,55 @@ export function registerWorkflowRoutes(app: AppInstance, ctx: ServerContext): vo
         });
       }
       const resumed = await ctx.workflowRunner.resume(project, run.id);
+      return reply.code(202).send(resumed);
+    },
+  );
+
+  app.post<{ Params: IdParams }>(
+    '/api/v1/workflows/:id/retry',
+    {
+      schema: { params: IdParamsSchema, response: { 202: WorkflowRunSchema } },
+      preHandler: admin,
+    },
+    async (request, reply) => {
+      const project = currentProject(ctx);
+      const retried = await ctx.workflowRunner.retry(project, request.params.id);
+      return reply.code(202).send(retried);
+    },
+  );
+
+  app.get<{ Params: IdParams }>(
+    '/api/v1/workflows/:id/messages',
+    {
+      schema: { params: IdParamsSchema, response: { 200: WorkflowConversationSchema } },
+      preHandler: admin,
+    },
+    async (request) => {
+      const project = currentProject(ctx);
+      const run = ctx.db.repos.workflowRun.getById(request.params.id);
+      if (!run || run.projectId !== project.id) {
+        throw new DomainError('NOT_FOUND', 'WorkflowRun 不存在', { id: request.params.id });
+      }
+      return {
+        messages: ctx.db.repos.workflowInteraction.listMessages(run.id),
+        openWait: ctx.db.repos.workflowInteraction.getOpenWait(run.id),
+      };
+    },
+  );
+
+  app.post<{ Params: IdParams; Body: RespondWorkflowRequest }>(
+    '/api/v1/workflows/:id/respond',
+    {
+      schema: {
+        params: IdParamsSchema,
+        body: RespondWorkflowRequestSchema,
+        response: { 202: WorkflowRunSchema },
+      },
+      preHandler: admin,
+    },
+    async (request, reply) => {
+      const project = currentProject(ctx);
+      const resumed = await ctx.workflowRunner.respond(project, request.params.id, request.body);
       return reply.code(202).send(resumed);
     },
   );

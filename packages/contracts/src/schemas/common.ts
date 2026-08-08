@@ -10,7 +10,9 @@ import type {
   ReleaseId,
   ReviewItemId,
   SourceAssetId,
+  WorkflowMessageId,
   WorkflowRunId,
+  WorkflowWaitId,
 } from '../ids.js';
 import {
   APPROVAL_STATES,
@@ -32,6 +34,9 @@ import {
   REVIEW_VERDICTS,
   SOURCE_KINDS,
   WORKFLOW_RUN_STATUSES,
+  WORKFLOW_MESSAGE_KINDS,
+  WORKFLOW_MESSAGE_ROLES,
+  WORKFLOW_WAIT_STATUSES,
   WORKFLOW_TYPES,
 } from '../enums.js';
 
@@ -53,6 +58,8 @@ export const ReleaseIdSchema = Type.String(idShape) as BrandedId<ReleaseId>;
 export const SourceAssetIdSchema = Type.String(idShape) as BrandedId<SourceAssetId>;
 export const DelegationPolicyIdSchema = Type.String(idShape) as BrandedId<DelegationPolicyId>;
 export const WorkflowRunIdSchema = Type.String(idShape) as BrandedId<WorkflowRunId>;
+export const WorkflowMessageIdSchema = Type.String(idShape) as BrandedId<WorkflowMessageId>;
+export const WorkflowWaitIdSchema = Type.String(idShape) as BrandedId<WorkflowWaitId>;
 export const ReviewItemIdSchema = Type.String(idShape) as BrandedId<ReviewItemId>;
 
 // 领域字符串上限（HTTP contract 统一口径）。
@@ -74,6 +81,7 @@ export const LIMITS = {
   reviewReasonCode: 64,
   focusInstruction: 4000,
   blockedReason: 4000,
+  workflowMessage: 20000,
 } as const;
 
 function literals<T extends readonly string[]>(
@@ -96,6 +104,9 @@ export const ReviewItemStatusSchema = Type.Union(literals(REVIEW_ITEM_STATUSES))
 export const ReviewEntityKindSchema = Type.Union(literals(REVIEW_ENTITY_KINDS));
 export const WorkflowTypeSchema = Type.Union(literals(WORKFLOW_TYPES));
 export const WorkflowRunStatusSchema = Type.Union(literals(WORKFLOW_RUN_STATUSES));
+export const WorkflowMessageRoleSchema = Type.Union(literals(WORKFLOW_MESSAGE_ROLES));
+export const WorkflowMessageKindSchema = Type.Union(literals(WORKFLOW_MESSAGE_KINDS));
+export const WorkflowWaitStatusSchema = Type.Union(literals(WORKFLOW_WAIT_STATUSES));
 export const DelegationModeSchema = Type.Union(literals(DELEGATION_MODES));
 export const EventTypeSchema = Type.Union(literals(EVENT_TYPES));
 export const EvidenceKindSchema = Type.Union(literals(EVIDENCE_KINDS));

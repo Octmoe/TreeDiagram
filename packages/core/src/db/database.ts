@@ -13,6 +13,7 @@ import { DelegationRepository } from './repositories/delegation.js';
 import { WorkflowRunRepository } from './repositories/workflow-run.js';
 import { ReviewItemRepository } from './repositories/review-item.js';
 import { EventRepository } from './repositories/event.js';
+import { WorkflowInteractionRepository } from './repositories/workflow-interaction.js';
 
 export interface Repositories {
   project: ProjectRepository;
@@ -23,6 +24,7 @@ export interface Repositories {
   release: ReleaseRepository;
   delegation: DelegationRepository;
   workflowRun: WorkflowRunRepository;
+  workflowInteraction: WorkflowInteractionRepository;
   reviewItem: ReviewItemRepository;
   event: EventRepository;
 }
@@ -55,6 +57,7 @@ export class DatabaseContext {
       release: new ReleaseRepository(this.db, parseIds),
       delegation: new DelegationRepository(this.db),
       workflowRun: new WorkflowRunRepository(this.db),
+      workflowInteraction: new WorkflowInteractionRepository(this.db),
       reviewItem: new ReviewItemRepository(this.db),
       event: new EventRepository(this.db),
     };

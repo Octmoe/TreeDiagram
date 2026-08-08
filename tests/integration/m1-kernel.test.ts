@@ -39,7 +39,7 @@ describe('M1 数据库集成（§16.2）', () => {
     const ws = makeTestWorkspace();
     const row = ws.db.repos.project.requireSingleton();
     expect(row.name).toBe('test-project');
-    expect(ws.db.schemaVersion()).toBe(1);
+    expect(ws.db.schemaVersion()).toBe(2);
     const events = ws.db.repos.event.list(ws.project.id, 0, 10);
     expect(events).toEqual([]);
   });

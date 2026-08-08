@@ -15,6 +15,8 @@ export type ReleaseId = Brand<string, 'ReleaseId'>;
 export type SourceAssetId = Brand<string, 'SourceAssetId'>;
 export type DelegationPolicyId = Brand<string, 'DelegationPolicyId'>;
 export type WorkflowRunId = Brand<string, 'WorkflowRunId'>;
+export type WorkflowMessageId = Brand<string, 'WorkflowMessageId'>;
+export type WorkflowWaitId = Brand<string, 'WorkflowWaitId'>;
 export type ReviewItemId = Brand<string, 'ReviewItemId'>;
 
 /** 将受信来源（数据库行、已校验请求）的字符串标记为对应品牌 ID。 */

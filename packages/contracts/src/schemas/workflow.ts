@@ -6,12 +6,93 @@ import {
   NodeIdSchema,
   ProjectIdSchema,
   SourceAssetIdSchema,
+  WorkflowMessageIdSchema,
   WorkflowRunIdSchema,
+  WorkflowWaitIdSchema,
   LIMITS,
   Nullable,
+  WorkflowMessageKindSchema,
+  WorkflowMessageRoleSchema,
   WorkflowRunStatusSchema,
+  WorkflowWaitStatusSchema,
   WorkflowTypeSchema,
 } from './common.js';
+
+export const WorkflowClarificationQuestionSchema = Type.Object(
+  {
+    id: IdSchema,
+    question: Type.String({ minLength: 1, maxLength: LIMITS.rationale }),
+    blocking: Type.Boolean(),
+    relatedProposalRefs: Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.proposalRef }), {
+      maxItems: 20,
+    }),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowClarificationQuestion = Static<typeof WorkflowClarificationQuestionSchema>;
+
+export const WorkflowAnswerSchema = Type.Object(
+  {
+    questionId: IdSchema,
+    answerText: Type.String({ minLength: 1, maxLength: LIMITS.workflowMessage }),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowAnswer = Static<typeof WorkflowAnswerSchema>;
+
+export const WorkflowMessageSchema = Type.Object(
+  {
+    id: WorkflowMessageIdSchema,
+    workflowRunId: WorkflowRunIdSchema,
+    sequence: Type.Integer({ minimum: 1 }),
+    role: WorkflowMessageRoleSchema,
+    kind: WorkflowMessageKindSchema,
+    contentText: Type.String({ maxLength: LIMITS.workflowMessage }),
+    questions: Type.Array(WorkflowClarificationQuestionSchema, { maxItems: 20 }),
+    answers: Type.Array(WorkflowAnswerSchema, { maxItems: 20 }),
+    sourceAssetIds: Type.Array(SourceAssetIdSchema, { maxItems: 20 }),
+    replyToMessageId: Nullable(WorkflowMessageIdSchema),
+    clientMessageId: Nullable(IdSchema),
+    createdAt: IsoTimestampSchema,
+  },
+  { additionalProperties: false },
+);
+export type WorkflowMessage = Static<typeof WorkflowMessageSchema>;
+
+export const WorkflowWaitSchema = Type.Object(
+  {
+    id: WorkflowWaitIdSchema,
+    workflowRunId: WorkflowRunIdSchema,
+    messageId: WorkflowMessageIdSchema,
+    status: WorkflowWaitStatusSchema,
+    answeredByMessageId: Nullable(WorkflowMessageIdSchema),
+    createdAt: IsoTimestampSchema,
+    answeredAt: Nullable(IsoTimestampSchema),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowWait = Static<typeof WorkflowWaitSchema>;
+
+export const WorkflowConversationSchema = Type.Object(
+  {
+    messages: Type.Array(WorkflowMessageSchema),
+    openWait: Nullable(WorkflowWaitSchema),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowConversation = Static<typeof WorkflowConversationSchema>;
+
+export const RespondWorkflowRequestSchema = Type.Object(
+  {
+    waitId: WorkflowWaitIdSchema,
+    clientMessageId: IdSchema,
+    message: Type.String({ minLength: 1, maxLength: LIMITS.workflowMessage }),
+    answers: Type.Array(WorkflowAnswerSchema, { maxItems: 20 }),
+    sourceAssetIds: Type.Array(SourceAssetIdSchema, { maxItems: 20 }),
+  },
+  { additionalProperties: false },
+);
+export type RespondWorkflowRequest = Static<typeof RespondWorkflowRequestSchema>;
 
 export const WorkflowRunSchema = Type.Object(
   {
