@@ -42,7 +42,8 @@ npm ci && npm start
    或先用 `npm start -- --fake` 离线体验；
 3. 打开 `http://127.0.0.1:4317/`，粘贴 **admin token** 进入编辑器；
 4. 在 WorkflowPanel 选择 `initialize`，多选上传描述想法的 source 文件（可追加/移除），点「启动」；
-5. 确认根部 → Adopt → 复核 → Publish，得到 Release 1。
+5. Initialize 写入候选后会显示“等待审批”；在 Inspector 把根节点改为 `user_confirmed`，
+   点击“已完成根节点确认，重新检查并完成” → Adopt → 复核 → Publish，得到 Release 1。
 
 ## 4. 编辑器界面导览
 
@@ -66,7 +67,9 @@ npm ci && npm start
 通用规则：
 
 - 同一时刻只允许一个进行中的 WorkflowRun；
-- 每次运行都显示**当前步骤**与**检查点**；失败/中断后可从本地 checkpoint 续跑；
+- 每次运行都显示**当前步骤**、语义 Issue 与**检查点**；失败/中断后可从本地 checkpoint 续跑；
+- 运行先评估信息是否足够；歧义会先聊天确认，不会边猜边写；
+- 候选先在内存 WorkingSet 预检。硬结构错误最多自动修复两次，失败时不会部分落库；
 - Agent 产出一律进入候选 ChangeSet，**不自动发布**（ai_managed 例外，见 §7）；
 - 启动方式：WorkflowPanel 选类型、（derive/grill 需要先在树上选中目标节点）、
   可选填 focus 指令 →「启动」。对应 API：`POST /api/v1/workflows`。
@@ -75,11 +78,11 @@ npm ci && npm start
 
 | 项             | 说明                                                                             |
 | -------------- | -------------------------------------------------------------------------------- |
-| **用途**       | 把一段原始描述变成初版设计树：提取命题 + 提出根部候选                            |
+| **用途**       | 把原始描述一次投影成完整初版设计图，并提出根部候选                               |
 | **可用条件**   | project = `initializing`（全新工作区只有一次）                                   |
 | **输入**       | 至少一个 source（`POST /api/v1/sources`，markdown 文本）                         |
 | **产出**       | root 角色候选（tentative）+ 普通候选 + contains 结构；未确认细节保留为 `assumed` |
-| **之后做什么** | 检查根部 → 把它 revise 成 `user_confirmed` → Adopt → 复核 → Publish Release 1    |
+| **之后做什么** | 在“等待审批”阶段把 root revise 成 `user_confirmed` → 重新检查 → Adopt → Publish  |
 
 > UI 入口：WorkflowPanel 选择 `initialize` 后出现 source 暂存区——可多次多选追加
 > markdown/纯文本文件、在列表中查看并移除（同名同大小自动去重）；启动时逐个上传
@@ -187,19 +190,21 @@ GET /api/v1/query?view=release&type=decision
 
 ## 10. 异常与恢复
 
-| 情况              | 现象                                                    | 处理                                                               |
-| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| 模型问你问题      | run = `waiting_user`，Workflow 面板自动展开对话         | 在对话框回答；UI 调用 `POST /workflows/:id/respond` 后重跑同一阶段 |
-| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                                         |
-| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                                              |
-| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | “重试失败阶段”或 `POST /workflows/:id/retry`                       |
-| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | retry 从本地 checkpoint 幂等续跑                                   |
-| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）                       |
-| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake`                    |
-| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正                       |
+| 情况              | 现象                                                    | 处理                                                   |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------------------ |
+| 信息存在关键歧义  | run = `waiting_user`，面板显示“等待回答”与语义 Issue    | 在对话框回答；`respond` 后重新做就绪评估               |
+| root 尚未确认     | run = `waiting_user`，面板显示“等待审批”                | 将 root revise 为 `user_confirmed`，点“重新检查并完成” |
+| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                             |
+| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                                  |
+| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | “重试失败阶段”或 `POST /workflows/:id/retry`           |
+| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | retry 从本地 checkpoint 幂等续跑                       |
+| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）           |
+| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake`        |
+| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正           |
 
-> 澄清对话与故障重试已经分离：`respond` 必须携带当前 `waitId` 与幂等 `clientMessageId`；
-> `retry` 只接受 failed。旧 `resume` 保留给外部人工解除的 review blocker 与兼容调用，存在开放问题时会拒绝。
+> 澄清、审批与故障重试彼此分离：`respond` 必须携带当前 `waitId` 与幂等 `clientMessageId`；
+> `retry` 只接受 failed；`resume` 用于重新检查已经由用户在领域对象上完成的审批或外部 blocker，
+> 存在开放问题时不能绕过。
 
 ### 错误窗口
 

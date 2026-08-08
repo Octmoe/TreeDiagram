@@ -132,7 +132,8 @@ TreeDiagram/
 │     ├─ tsconfig.json
 │     ├─ migrations/
 │     │  ├─ 0001_initial.sql
-│     │  └─ 0002_workflow_conversation.sql
+│     │  ├─ 0002_workflow_conversation.sql
+│     │  └─ 0003_workflow_issue.sql
 │     └─ src/
 │        ├─ index.ts
 │        ├─ errors.ts
@@ -389,7 +390,11 @@ ChangeSet：`open -> reevaluating -> ready -> published`；`open|reevaluating|re
 
 ReviewItem：`pending -> resolved|blocked`；`blocked -> pending` 只由显式 Resume/解除阻塞命令执行；`blocked -> resolved` 需要用户或授权 AI 给出 verdict+rationale。resolved 不原地回退；后续变化创建新的 review item。
 
-WorkflowRun：`queued -> running -> succeeded|failed|waiting_user|cancelled`；用户回答使 `waiting_user -> queued -> running`，外部 review blocker 解除后兼容 resume 也可继续。进程重启时遗留的 queued/running 标记为 `failed(PROCESS_INTERRUPTED)`；`waiting_user` 与其完整本地对话保持不变。终态不可恢复。
+WorkflowRun：`queued -> running -> succeeded|failed|waiting_user|cancelled`；用户回答使澄清型
+`waiting_user -> queued -> running`。审批型等待复用数据库兼容状态 `waiting_user`，以
+`current_step=waiting_approval` 区分，`resume` 只重新检查领域对象中的显式审批，不能自行授予审批。
+进程重启时遗留的 queued/running 标记为 `failed(PROCESS_INTERRUPTED)`；`waiting_user`、Issue 账本与
+完整本地对话保持不变。终态不可恢复。
 
 Approval/Epistemic 看似“状态变化”，实际永远通过新 revision 表达，不 UPDATE 旧 revision。用户可以创建任意合法治理状态但不能伪造 ai_confirmed；Agent 只能创建 draft/tentative，或在有效托管范围内创建 ai_confirmed，永远不能创建 user_confirmed。
 
@@ -649,6 +654,11 @@ CREATE INDEX event_outbox_project_cursor_idx ON event_outbox(project_id, cursor)
 保证用户提交幂等；wait 通过部分唯一索引保证每个 run 最多一条 `status=open`。Agent 问题、用户
 结构化答案和 source 附件 ID 使用受 Schema 校验的 JSON 列，开放 wait 的 message/answer 都使用
 外键关联，取消或回答只改变 wait 状态，不改写历史消息。
+
+`0003_workflow_issue.sql` 增加 `workflow_issue` 语义账本。每条 Issue 具有 run 内稳定 key、类型
+（歧义/决策/审批/不一致/外部依赖）、执行门（提案前/写入前/完成前）和
+`open -> answered -> resolved|superseded` 生命周期，并精确关联发问/回答消息。Issue 是控制器的
+持久判断门；message 是不可变交互事实，两者不能相互替代。
 
 `authorization_json` 在 approval_state=ai_confirmed 时必须由领域层校验为 `{ workflowRunId, policyId }`，其他状态必须为 null。数据库 CHECK 阻止所有关系自环；端点类型矩阵和其他跨表规则由 RelationService 校验。
 
@@ -1058,7 +1068,8 @@ interface ModelProvider {
 
 ### 12.3 为什么不做模型工具循环
 
-V1 每个工作流步骤先由确定性代码查询数据库并构建完整所需上下文，再让模型返回一个严格 `DesignProposal` 或 `ReevaluationBatchResult`。这样：
+V1 每个工作流步骤先由确定性代码查询数据库并构建完整所需上下文，再依次请求严格的
+`WorkflowReadiness` 与 `DesignProposal`（Re-evaluate 使用批次结果）。这样：
 
 - 模型无法任意探索或写状态；
 - 每个步骤天然可检查点恢复；
@@ -1066,7 +1077,38 @@ V1 每个工作流步骤先由确定性代码查询数据库并构建完整所�
 - schema、权限和一致性检查都在本地；
 - 下级 Agent 不需要实现复杂 ReAct/tool loop。
 
-### 12.4 DesignProposal schema
+### 12.4 WorkflowReadiness schema
+
+就绪评估与设计提案使用两个独立结构化回合，避免模型一边声明信息不足，一边提交基于猜测的修改。
+
+```ts
+interface WorkflowReadiness {
+  schemaVersion: 1;
+  workflowType: WorkflowType;
+  summary: string;
+  normalizedBrief: string;
+  readiness: 'ready' | 'needs_user' | 'insufficient_context';
+  issues: Array<{
+    issueId: string | null;
+    issueKey: string;
+    kind: 'ambiguity' | 'decision' | 'approval' | 'inconsistency' | 'external_dependency';
+    gate: 'before_proposal' | 'before_apply' | 'before_release';
+    question: string;
+    rationale: string;
+    answerType: 'free_text' | 'single_choice' | 'multiple_choice' | 'confirmation';
+    options: string[];
+    relatedRefs: string[];
+  }>;
+  resolvedIssueIds: string[];
+  assumptions: string[];
+  warnings: string[];
+}
+```
+
+模型只能解决当前 run 中已经由用户回答的 Issue。`readiness !== ready` 却没有明确 Issue 时，
+Runner 必须生成一个稳定的兜底 Issue，不能静默等待或继续提案。
+
+### 12.5 DesignProposal schema
 
 模型所有字段必须出现；不适用值使用 null 或空数组，避免 strict schema 的 optional 歧义。
 
@@ -1117,7 +1159,7 @@ Schema 上限固定为：nodeActions 100、relationActions 300、questionsForUse
 
 ProposalApplier 必须：schema 校验、temp ref 解析、类型/端点校验、托管权限降级、原子事务写入。同一 proposalRef 不得重复。human_final 分支中的 ai_confirmed suggestion 自动降级为 tentative。revise node/relation action 的 nodeType/relationType 必须与其逻辑实体原类型完全一致。
 
-### 12.5 ReevaluationBatchResult schema
+### 12.6 ReevaluationBatchResult schema
 
 ```ts
 interface ReevaluationBatchResult {
@@ -1139,7 +1181,7 @@ interface ReevaluationBatchResult {
 
 每批最多 20 个 review item，避免一次提示过大。批次按 depends_on 强连通分量的逆依赖顺序处理。
 
-### 12.6 Prompt 文件要求
+### 12.7 Prompt 文件要求
 
 每个 prompt 只包含：角色目标、输入字段说明、硬规则、输出 schema 语义、停止条件。共同规则只放 `shared.ts`，不得在五个 prompt 重复堆叠。
 
@@ -1162,26 +1204,39 @@ Prompt 必须强调：
 ```text
 queued
   -> running/load_context
-  -> running/generate
-  -> running/validate_output
-  -> running/apply_proposal
-  -> waiting_user | succeeded | failed
+  -> running/assess_readiness
+  -> waiting_user/clarification ──respond──┐
+  -> running/generate_proposal             │
+  -> running/virtual_preflight             │
+       ├─ hard structural issue -> repair (最多 2 次)
+       └─ semantic decision ----> waiting_user/clarification
+  -> running/apply_proposal（单事务）
+  -> waiting_user/waiting_approval ──显式确认 + resume──┐
+  -> succeeded | failed                                 │
+  └─────────────────────────────────────────────────────┘
 ```
 
 每步完成后事务更新 checkpoint_json。checkpoint 至少保存：已完成步骤、输入上下文 hash、生成的 proposal、已经落库的 entity IDs。retry/resume 必须幂等：若 proposal 已应用，不得重复创建节点。
 
-运行时澄清与设计树中的 Question 是两类对象：前者保存在 `workflow_message/workflow_wait`，只控制
-当前 Workflow 阶段；后者是需要长期追踪、参与一致性检查的领域节点。模型输出 questionsForUser 或
-非 completed stopReason 时，当前回合 node/relation actions 不得应用；Runner 持久化 Agent 消息后
-进入 waiting_user。用户以 waitId + clientMessageId 回答，回答事务提交后重新运行同一阶段，模型输入
-在 JSON data.workflowConversation 中携带完整本地对话。整个机制不依赖 provider 会话。
+运行时澄清与设计树中的 Question 是两类对象：前者以 `workflow_issue` 为判断门、以
+`workflow_message/workflow_wait` 为交互记录，只控制当前 Workflow 阶段；后者是需要长期追踪并参与
+一致性检查的领域节点。Readiness 或预检要求用户判断时，当前回合 node/relation actions 不得应用。
+用户以 waitId + clientMessageId 回答；消息写入、Issue 转 answered、wait 关闭和 run 入队在同一事务
+完成。模型输入在 `data.workflowIssues` 和 `data.workflowConversation` 中携带完整本地状态。
+
+DesignProposal 必须先投影成不落库的虚拟 WorkingSet，并与基线 checker 结果做差分，只处理提案
+新增或触及的 blocking issue。`ROOT_MISSING` 等结构错误进入自动修复回合，最多两次；blocking
+Question/contradiction 转为 `before_apply` Issue；tentative root 在原子写入后建立
+`before_release/approval` Issue。任何失败或等待都不能留下部分提案。
 
 ### 13.1 Initialize
 
 - 输入 sourceAssetIds。
-- 第一步提取全部候选，非 root 默认 assumed/tentative。
-- 第二步单独生成 root candidates 和 root contradictions。
+- 先完成就绪评估；关键目标、边界或术语不明确时先聊天确认。
+- 单次提案生成完整项目投影：全部候选、root、来源与关系共享同一 proposal ref 空间。
+- 旧 checkpoint 中已经存在的 extract/root 两阶段提案仍可恢复，避免升级后丢失在途工作。
 - root candidate 永远 tentative；用户在 UI 中改为 user_confirmed。
+- 写入后 run 停在 waiting_approval；用户确认 root 并 resume 后才完成运行。
 - 首次 ChangeSet adoption 后走 consistency 和 Release 1。
 
 ### 13.2 Derive
@@ -1257,7 +1312,13 @@ Tab：Overview、Relations、Evidence、History、Delegation。
 
 ### 14.5 Workflow Panel
 
-允许选择 workflow 和 target；显示当前步骤、结构化 summary、warnings、提案数量。waiting_user 时自动展开持久化任务对话，显示 Agent 消息、稳定问题 ID 对应的问题与用户历史回答，并提供自由文本回答入口；提交后显示用户消息并跟随同一 run 继续轮询。failed 提供独立“重试失败阶段”。模型长时间等待时保持取消按钮，并允许管理员展开本地持久化的模型调用轨迹：阶段、已等待时间、脱敏/截断后的请求预览、最终结构化响应、responseId 与 token usage。Initialize 的 extract/root 两次调用分别展示。内部 reasoning 不展示。取消只停止后续步骤，不回滚已成功写入 ChangeSet 的提案。
+允许选择 workflow 和 target；显示当前步骤、结构化 summary、warnings、提案数量。面板把
+`waiting_user` 区分为“等待回答”和“等待审批”，展示 Issue 类型、执行门和生命周期。澄清型等待显示
+不可变消息历史与自由文本回答入口；审批型等待引导用户在 Inspector 显式确认 root，再点击“重新检查
+并完成”。failed 提供独立“重试失败阶段”。模型长时间等待时保持取消按钮，并允许管理员展开本地
+持久化的模型调用轨迹：就绪评估、完整提案、自动修复阶段、等待时间、脱敏/截断请求、结构化响应、
+responseId 与 token usage。旧 Initialize extract/root 轨迹仍可显示。内部 reasoning 不展示。取消只
+停止后续步骤，不回滚已原子写入 ChangeSet 的提案。
 
 ## 15. 配置、日志与错误
 

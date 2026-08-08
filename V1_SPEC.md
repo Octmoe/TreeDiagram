@@ -341,9 +341,13 @@ flowchart LR
   C --> DB["SQLite 工作区"]
   C --> CTX["上下文装配器"]
   CTX --> LLM["单模型适配器"]
-  LLM --> PROP["结构化 ChangeSet 提案"]
-  PROP --> C
-  C --> CHECK["权限 + Schema + 一致性检查"]
+  LLM --> READY["就绪评估"]
+  READY --> ISSUES["语义 Issue 账本"]
+  ISSUES --> UI
+  READY --> PROP["结构化 ChangeSet 提案"]
+  PROP --> PREFLIGHT["虚拟 WorkingSet 预检"]
+  PREFLIGHT --> C
+  C --> CHECK["权限 + Schema + 原子写入"]
   CHECK --> DB
   DB --> EVT["持久事件流"]
 ```
@@ -384,18 +388,19 @@ V1 不使用向量数据库。先依靠树路径、类型过滤、关系遍历�
 
 ### 9.4 运行持久化
 
-每个 WorkflowRun 保存类型、目标、状态、输入、当前步骤、已产生提案、结构化摘要和错误。每次模型调用或工具提交后建立检查点。运行中需要澄清时，Agent 消息、稳定问题 ID、用户回答与附件引用作为本地不可变对话记录持久化；服务重启后从最后检查点与本地对话恢复，不依赖供应商会话历史。
+每个 WorkflowRun 保存类型、目标、状态、输入、当前步骤、已产生提案、结构化摘要和错误。每次模型调用或工具提交后建立检查点。运行中需要澄清或审批时，系统持久化独立的语义 Issue（类型、执行门、状态、稳定 ID、消息关联与解决记录）；Agent 消息、用户回答与附件引用作为本地不可变对话记录持久化。服务重启后从最后检查点、Issue 账本与本地对话恢复，不依赖供应商会话历史。
 
 ## 10. 核心工作流
 
 ### 10.1 Initialize — 初始化与找根
 
 1. 保存用户原始输入为 Source Asset。
-2. Agent 拆分原子化候选，并记录 `derived_from` 来源。
-3. Agent 提出 Claim、Goal、Constraint 等候选类型；非根内容默认 epistemic=assumed、governance=tentative。
-4. Agent 提出一组根命题，并 Grill 其内部矛盾、范围缺口和伪解决方案。
-5. 用户修改并确认根部。
-6. 系统完成一致性检查并发布 Release 1。
+2. Agent 先评估目标、边界和关键术语是否足够明确；不足则先对话，不生成提案。
+3. Agent 一次生成包含原子候选、`derived_from` 来源、结构关系和根候选的完整项目投影。
+4. 控制器在虚拟 WorkingSet 上预检；结构错误可自动回修，语义问题必须由用户裁决。
+5. 提案原子写入 ChangeSet；root 保持 tentative，运行进入审批门。
+6. 用户修改并确认根部，系统重新检查后完成运行。
+7. Adopt、复核并发布 Release 1。
 
 初始材料只提供来源，不自动证明其中命题真实。
 
@@ -523,6 +528,9 @@ UI 使用同一服务的内部 API 创建候选修订、运行工作流、修改
 - `change_set_relation_head`
 - `release`
 - `workflow_run`
+- `workflow_message`
+- `workflow_wait`
+- `workflow_issue`
 - `review_item`
 - `event_outbox`
 

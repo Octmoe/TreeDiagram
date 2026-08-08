@@ -110,18 +110,22 @@ Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
 状态的 WorkflowRun 在启动时被标记 `failed(PROCESS_INTERRUPTED)`，可通过
 `POST /api/v1/workflows/:id/resume` 从本地 checkpoint 幂等续跑（不依赖供应商会话）。
 
-当模型判断输入存在关键歧义时，当前阶段不会应用任何提案，而是把 Agent 消息与稳定问题 ID
-持久化并进入 `waiting_user`。Workflow 面板会自动展开任务对话；用户回答后，服务端以原始上下文、
-本地持久化对话和附件重新运行同一阶段。HTTP 客户端可使用：
+每个工作流先做独立的就绪评估。关键歧义、待决策和外部依赖会成为带稳定 ID、生命周期和
+执行门位置的 `workflow_issue`，并在任何提案写入前进入 `waiting_user`。Workflow 面板会自动展开
+任务对话；用户回答后，服务端以原始上下文、本地对话、Issue 账本和附件重新运行同一阶段。
+HTTP 客户端可使用：
 
-- `GET /api/v1/workflows/:id/messages` 读取对话与当前开放等待；
+- `GET /api/v1/workflows/:id/messages` 读取对话、当前开放等待与 Issue 账本；
 - `POST /api/v1/workflows/:id/respond` 提交幂等回答并继续；
 - `POST /api/v1/workflows/:id/retry` 仅重试 `failed` 运行。
 
 聊天回答不会隐式确认 root、发布 Release 或修改托管策略；这些仍是显式用户操作。
+提案写入前还会投影到内存 WorkingSet 并运行一致性检查：新增的硬结构错误最多自动回修两次，
+仍失败则整个提案不落库；需要用户判断的问题重新进入 Issue 门。Initialize 写入 tentative root 后
+会停在“等待审批”，直到用户把根节点 revise 为 `user_confirmed` 并在面板触发重新检查。
 
-Workflow 面板可展开“模型记录”：请求发出前即写入当前阶段（Initialize 会区分“提取候选”与
-“生成根节点”）、开始时间、模型与推理档位，完成后补充最终结构化响应、responseId 和 token
+Workflow 面板可展开“模型记录”：请求发出前即写入当前阶段（就绪评估、完整提案、自动修复）、
+开始时间、模型与推理档位，完成后补充最终结构化响应、responseId 和 token
 用量。记录只对 admin 开放，密钥字段会脱敏，源码/上下文/响应会截断，不包含模型内部思维链。
 每次运行最多保留最近 50 条调用记录。
 
@@ -150,16 +154,16 @@ npm run test:model-smoke  # 4 个真实 OpenAI 兼容端点测试（需 OPENAI_A
 
 验收状态：
 
-- 单元 + 集成测试 155 个全部通过（110 个单元、45 个集成；FakeModelProvider 下所有工作流确定性通过）；
+- 单元 + 集成套件覆盖全部工作流，并以 FakeModelProvider 确定性验证；
 - 6 个确定性 Playwright 场景通过；配置真实模型后，第 7 个场景会经浏览器和真实 server
   调用模型并完成 Derive → Adopt → Review → Publish；
 - 贯穿验收（V1_SPEC §15 的 11 步 dogfooding 场景）由
   `tests/integration/m5-acceptance.test.ts` 全程通过 API 完成，无需直接编辑数据库；
 - 5,000 节点 / 20,000 关系规模测试、工作区重启恢复测试通过（`tests/integration/m1-kernel.test.ts`）；
-- 4 个真实 OpenAI 兼容端点测试已通过：Initialize 两阶段生成、Core 全生命周期
-  （Derive 等待/恢复 → Grill → Unbox → Adopt → Re-evaluate → Publish）、HTTP API 闭环、
+- 4 个真实 OpenAI 兼容端点测试覆盖：Initialize 就绪评估与完整投影、Core 全生命周期
+  （Derive 等待/回答 → Grill → Unbox → Adopt → Re-evaluate → Publish）、HTTP API 闭环、
   在途请求取消；未提供 `OPENAI_API_KEY` 时自动跳过，设置后运行
-  `npm run test:model-smoke` 即可复验。
+  `npm run test:model-smoke` 复验当前模型行为。
 
 ## 仓库结构
 

@@ -97,8 +97,8 @@ IMPLEMENTATION_DESIGN §11 为准；schema 的机器可读实现位于
 | `STALE_BASE_REVISION`             | 409  | revise 时 baseRevisionId 不是当前 tip           |
 | `INVALID_STATE_TRANSITION`        | 409  | 对当前状态不允许的变更（如对已归档节点 revise） |
 | `CHANGE_SET_ALREADY_EXISTS`       | 409  | 已存在 live ChangeSet 时再次隐式/显式开启       |
-| `WORKFLOW_ALREADY_RUNNING`        | 409  | 已有 running/paused 的 WorkflowRun              |
-| `WORKFLOW_NOT_RESUMABLE`          | 409  | resume 一个非 paused/failed 状态的 run          |
+| `WORKFLOW_ALREADY_RUNNING`        | 409  | 已有 queued/running/waiting_user WorkflowRun    |
+| `WORKFLOW_NOT_RESUMABLE`          | 409  | 状态不允许 resume/retry，或应使用 respond       |
 | `WORKFLOW_NOT_AVAILABLE`          | 409  | 当前 project 状态下该工作流种类不可用           |
 | `ROOT_REQUIRES_USER_CONFIRMATION` | 422  | 尝试以非 user_confirmed 方式确认根节点          |
 | `AI_SCOPE_VIOLATION`              | 422  | AI 写入超出其 ChangeSet 范围或确认权限          |
@@ -217,16 +217,16 @@ schema 名称均指 `packages/contracts/src/schemas/` 中的导出。响应均�
 
 ### 6.7 Workflow
 
-| Method | Path                      | Scope | Body/Query                     | Response                             | 备注                                                      |
-| ------ | ------------------------- | ----- | ------------------------------ | ------------------------------------ | --------------------------------------------------------- |
-| POST   | `/workflows`              | admin | `StartWorkflowRequestSchema`   | `WorkflowRunSchema` (202)            | 已有 running/paused run 时 409 `WORKFLOW_ALREADY_RUNNING` |
-| GET    | `/workflows/:id`          | admin | —                              | `WorkflowRunSchema`                  |                                                           |
-| POST   | `/workflows/:id/resume`   | admin | —                              | `WorkflowRunSchema` (202)            | 兼容故障恢复/外部 blocker；有开放对话时拒绝               |
-| POST   | `/workflows/:id/retry`    | admin | —                              | `WorkflowRunSchema` (202)            | 仅 failed；从本地 checkpoint 重试                         |
-| GET    | `/workflows/:id/messages` | admin | —                              | `WorkflowConversationSchema`         | 不向 consumer 暴露对话                                    |
-| POST   | `/workflows/:id/respond`  | admin | `RespondWorkflowRequestSchema` | `WorkflowRunSchema` (202)            | waitId 防过期；clientMessageId 保证幂等                   |
-| POST   | `/workflows/:id/cancel`   | admin | —                              | `WorkflowRunSchema` (200)            |                                                           |
-| GET    | `/workflows`              | admin | `WorkflowListQuerySchema`      | `WorkflowRunSchema[]` + `nextCursor` | cursor 分页                                               |
+| Method | Path                      | Scope | Body/Query                     | Response                             | 备注                                                     |
+| ------ | ------------------------- | ----- | ------------------------------ | ------------------------------------ | -------------------------------------------------------- |
+| POST   | `/workflows`              | admin | `StartWorkflowRequestSchema`   | `WorkflowRunSchema` (202)            | 已有活跃或等待中的 run 时 409 `WORKFLOW_ALREADY_RUNNING` |
+| GET    | `/workflows/:id`          | admin | —                              | `WorkflowRunSchema`                  |                                                          |
+| POST   | `/workflows/:id/resume`   | admin | —                              | `WorkflowRunSchema` (202)            | 重查审批/外部 blocker；开放 wait 或未解除审批时不会完成  |
+| POST   | `/workflows/:id/retry`    | admin | —                              | `WorkflowRunSchema` (202)            | 仅 failed；从本地 checkpoint 重试                        |
+| GET    | `/workflows/:id/messages` | admin | —                              | `WorkflowConversationSchema`         | 返回 messages、openWait、issues；不向 consumer 暴露      |
+| POST   | `/workflows/:id/respond`  | admin | `RespondWorkflowRequestSchema` | `WorkflowRunSchema` (202)            | waitId 防过期；clientMessageId 保证幂等                  |
+| POST   | `/workflows/:id/cancel`   | admin | —                              | `WorkflowRunSchema` (200)            |                                                          |
+| GET    | `/workflows`              | admin | `WorkflowListQuerySchema`      | `WorkflowRunSchema[]` + `nextCursor` | cursor 分页                                              |
 
 `WorkflowRun.checkpoint.modelCalls` 是管理员诊断轨迹：provider 请求发出前即追加 running
 记录，完成/失败/取消时原位补齐终态、最终结构化响应、responseId 与 usage。请求和响应只保存
@@ -234,10 +234,17 @@ schema 名称均指 `packages/contracts/src/schemas/` 中的导出。响应均�
 它是工作区本地 checkpoint 数据，不写入 Pino 请求日志，也不向 consumer 开放。
 单个 WorkflowRun 最多保留最近 50 条模型调用轨迹。
 
-模型需要用户澄清时必须在应用当前回合提案前进入 `waiting_user`。Agent 问题、用户回答与附件引用
-分别持久化在 `workflow_message`；`workflow_wait` 保证每个 run 最多一个开放等待。回答成功时，消息写入、
-wait 关闭与 run 转为 queued 在同一事务完成。服务端重新装配原始任务上下文和完整本地对话，不使用
-provider 会话续接。聊天内容仅 admin 可读，且不会直接授予 user_confirmed、Publish 或 policy 权限。
+模型需要用户澄清时必须在应用当前回合提案前进入 `waiting_user`。每个语义阻塞以
+`workflow_issue` 记录稳定 ID、kind、gate（`before_proposal|before_apply|before_release`）、status、
+精确消息链接与 resolution。Agent 问题、用户回答与附件分别持久化在 `workflow_message`；
+`workflow_wait` 保证每个 run 最多一个开放等待。自由文本在仅有一个问题时绑定该问题 ID；多问题
+客户端应提交结构化 answers。回答成功时，消息写入、Issue 转 answered、wait 关闭与 run 转 queued
+在同一事务完成。服务端重新装配原始任务上下文、Issue 账本和完整本地对话，不使用 provider 会话续接。
+
+提案通过虚拟 WorkingSet 预检后才原子写入。Initialize 的 tentative root 会建立
+`before_release/approval` Issue，run 以 `status=waiting_user,currentStep=waiting_approval` 暂停但不创建
+开放 wait；用户显式把 root revise 为 `user_confirmed` 后调用 `resume`，控制器重查并解决审批 Issue。
+聊天或 resume 都不会直接授予 user_confirmed、Publish 或 policy 权限。
 
 ### 6.8 下游 Release 与事件
 
