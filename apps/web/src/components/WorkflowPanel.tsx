@@ -66,7 +66,14 @@ export function WorkflowPanel() {
     void load();
   }, [load, state.refreshCounter]);
 
-  // 活跃 run 的 1s 轮询由全局 status 轮询驱动 refresh；这里直接随 refreshCounter 重读。
+  // 存在活跃 run 时本面板每 1s 自轮询：全局 status 轮询不会 bump refreshCounter，
+  // 不这么做的话 run 在服务端转为 failed/waiting_user 后界面会一直停留在旧快照。
+  const hasActiveRun = runs.some((r) => ['queued', 'running', 'waiting_user'].includes(r.status));
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    const timer = setInterval(() => void load(), 1000);
+    return () => clearInterval(timer);
+  }, [hasActiveRun, load]);
 
   const start = async () => {
     if (!api) return;
