@@ -24,7 +24,8 @@
     "test:e2e": "playwright test",
     "test:model-smoke": "vitest run --project model-smoke",
     "workspace:init": "node scripts/init-workspace.ts",
-    "seed:demo": "node scripts/seed-demo.ts"
+    "seed:demo": "node scripts/seed-demo.ts",
+    "start": "node scripts/start.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

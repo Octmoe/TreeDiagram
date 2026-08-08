@@ -40,6 +40,17 @@ npm run workspace:init -- --path <dir> --name <project-name>
 
 ## 运行
 
+快捷启动（推荐）：一条命令完成「初始化（首次）→ 构建（如需）→ 启动服务」。
+
+```bash
+npm start                          # 默认工作区 ./workspace
+npm start -- --workspace <dir>     # 指定工作区
+npm start -- --fake                # 离线演示：确定性假模型，无需 OPENAI_API_KEY
+npm start -- --build               # 强制重新构建
+```
+
+手动方式：
+
 ```bash
 TREEDIAGRAM_WORKSPACE=<dir> npm run dev
 # 或 node apps/server/dist/index.js --workspace <dir>
