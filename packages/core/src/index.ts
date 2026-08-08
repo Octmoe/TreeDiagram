@@ -38,5 +38,6 @@ export * from './db/repositories/workflow-issue.js';
 export * from './agent/context-builder.js';
 export * from './agent/batch-order.js';
 export * from './agent/proposal-applier.js';
+export * from './agent/proposal-preflight.js';
 export * from './agent/workflow-runner.js';
 export * from './agent/prompts/index.js';

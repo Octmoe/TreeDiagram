@@ -3,11 +3,19 @@ import type {
   ReviewItem,
   RespondWorkflowRequest,
   StartWorkflowRequest,
+  WorkflowAnswer,
+  WorkflowIssue,
   WorkflowMessage,
+  WorkflowReadiness,
   WorkflowRun,
   WorkflowType,
 } from '@treediagram/contracts';
-import { DesignProposalSchema, ReevaluationBatchResultSchema } from '@treediagram/contracts';
+import {
+  DesignProposalSchema,
+  ReevaluationBatchResultSchema,
+  WorkflowReadinessSchema,
+  asId,
+} from '@treediagram/contracts';
 import { EPISTEMIC_NODE_TYPES } from '@treediagram/contracts';
 import { DomainError } from '../errors.js';
 import { resolveDelegation } from '../domain/delegation-resolver.js';
@@ -35,13 +43,17 @@ import {
 } from './context-builder.js';
 import { orderReviewItemsByDependency } from './batch-order.js';
 import { ProposalApplier } from './proposal-applier.js';
+import { preflightProposal, type ProposalPreflightResult } from './proposal-preflight.js';
 import {
   DERIVE_INSTRUCTIONS,
   GRILL_INSTRUCTIONS,
   INITIALIZE_EXTRACT_INSTRUCTIONS,
+  INITIALIZE_INSTRUCTIONS,
   INITIALIZE_ROOT_INSTRUCTIONS,
+  PROPOSAL_REPAIR_INSTRUCTIONS,
   REEVALUATE_INSTRUCTIONS,
   UNBOX_INSTRUCTIONS,
+  readinessInstructions,
 } from './prompts/index.js';
 
 /**
@@ -86,6 +98,8 @@ interface RunCheckpoint {
   }>;
   /** 当前因澄清而暂停的模型阶段；回答后重跑同一阶段。 */
   awaitingStage?: string | null;
+  /** 最近一次通过的独立就绪评估，作为后续提案生成的规范化输入。 */
+  readiness?: WorkflowReadiness | null;
 }
 
 interface TracePreview {
@@ -140,6 +154,7 @@ const TRACE_MAX_INPUT = 12_000;
 const TRACE_MAX_RESPONSE = 16_000;
 const TRACE_MAX_CALLS = 50;
 const MODEL_MAX_OUTPUT_TOKENS = 16_384;
+const MAX_PREFLIGHT_REPAIRS = 2;
 const UNBOX_CONTAINER_NODE_REF = '__unbox_container_node__';
 const UNBOX_CONTAINER_REVISION_REF = '__unbox_container_revision__';
 
@@ -340,17 +355,7 @@ export class CoreWorkflowRunner {
           { runId: run.id },
         );
       }
-      // 用户已阅读问题并选择继续；proposal 已应用，直接收尾。
-      if (checkpoint.applied) {
-        const now = this.clock.now();
-        this.db.repos.workflowRun.update(
-          run.id,
-          { status: 'succeeded', currentStep: 'succeeded', finishedAt: now },
-          now,
-        );
-        return this.requireRun(project, runId);
-      }
-      // 未应用则按失败路径继续执行
+      // 已应用的提案仍需重新执行收尾，以验证 root 审批等 before_release gate。
     }
     if (this.db.repos.workflowRun.hasActiveRun(project.id, run.id)) {
       throw new DomainError('WORKFLOW_ALREADY_RUNNING', '已有进行中的 WorkflowRun');
@@ -387,11 +392,17 @@ export class CoreWorkflowRunner {
     );
     if (existing) {
       const requestedWait = this.db.repos.workflowInteraction.getWait(input.waitId);
+      const requestedPrompt = requestedWait
+        ? this.db.repos.workflowInteraction.getMessage(requestedWait.messageId)
+        : null;
+      const normalizedAnswers = requestedPrompt
+        ? normalizeWorkflowAnswers(requestedPrompt, input.message, input.answers)
+        : input.answers;
       const exactRetry =
         requestedWait?.workflowRunId === runId &&
         existing.replyToMessageId === requestedWait.messageId &&
         existing.contentText === input.message &&
-        JSON.stringify(existing.answers) === JSON.stringify(input.answers) &&
+        JSON.stringify(existing.answers) === JSON.stringify(normalizedAnswers) &&
         JSON.stringify(existing.sourceAssetIds) === JSON.stringify(input.sourceAssetIds);
       if (!exactRetry) {
         throw new DomainError('VALIDATION_FAILED', 'clientMessageId 已用于不同的工作流回答', {
@@ -437,17 +448,23 @@ export class CoreWorkflowRunner {
       }
       return asset.id;
     });
+    const normalizedAnswers = normalizeWorkflowAnswers(promptMessage, input.message, input.answers);
     const now = this.clock.now();
     this.db.transaction(() => {
-      this.db.repos.workflowInteraction.appendUserResponse({
+      const response = this.db.repos.workflowInteraction.appendUserResponse({
         runId: run.id,
         wait,
         clientMessageId: input.clientMessageId,
         contentText: input.message,
-        answers: input.answers,
+        answers: normalizedAnswers,
         sourceAssetIds,
         now,
       });
+      this.db.repos.workflowIssue.markAnswered(
+        promptMessage.questions.map((question) => question.id),
+        response.id,
+        now,
+      );
       this.db.repos.workflowRun.update(
         run.id,
         { status: 'queued', currentStep: 'queued', error: null, finishedAt: null },
@@ -600,9 +617,61 @@ export class CoreWorkflowRunner {
     }
   }
 
+  /** 将语义 Issue 投影为一次对话等待；Issue ID 同时作为问题 ID，回答可精确绑定。 */
+  private pauseForIssues(
+    runId: WorkflowRunId,
+    checkpoint: RunCheckpoint,
+    stage: string,
+    summary: string,
+    stopReason: string,
+    issues: WorkflowIssue[],
+  ): boolean {
+    if (issues.length === 0) return false;
+    checkpoint.awaitingStage = stage;
+    checkpoint.readiness = null;
+    const now = this.clock.now();
+    const interaction = this.db.transaction(() => {
+      const created = this.db.repos.workflowInteraction.createAgentWait(
+        runId,
+        summary,
+        issues.map((issue) => ({
+          id: issue.id,
+          question: issue.questionText,
+          blocking: true,
+          relatedProposalRefs: issue.relatedRefs,
+        })),
+        now,
+      );
+      this.db.repos.workflowIssue.bindOpeningMessage(
+        issues.map((issue) => issue.id),
+        created.message.id,
+        now,
+      );
+      this.db.repos.workflowRun.update(
+        runId,
+        {
+          status: 'waiting_user',
+          currentStep: 'waiting_user',
+          checkpoint: checkpoint as unknown as Record<string, unknown>,
+          summary: {
+            summary,
+            stopReason,
+            waitId: created.wait.id,
+            issueIds: issues.map((issue) => issue.id),
+            questionsForUser: created.message.questions,
+          },
+          finishedAt: null,
+        },
+        now,
+      );
+      return created;
+    });
+    return interaction.wait.status === 'open';
+  }
+
   /**
-   * 把模型的澄清请求持久化为真正的对话等待。询问回合不保存为可应用 proposal，
-   * 回答后由同一阶段基于原始上下文 + 完整对话重新生成。
+   * 兼容提案 Schema 中的旧式澄清字段，但先转换为持久化 Issue。询问回合不保存为
+   * 可应用 proposal，回答后由同一阶段基于完整对话重新生成。
    */
   private pauseForClarification(
     runId: WorkflowRunId,
@@ -631,34 +700,263 @@ export class CoreWorkflowRunner {
               relatedProposalRefs: [],
             },
           ];
-    checkpoint.awaitingStage = stage;
     const now = this.clock.now();
-    const interaction = this.db.transaction(() => {
-      const created = this.db.repos.workflowInteraction.createAgentWait(
-        runId,
-        result.summary,
-        questions,
-        now,
-      );
-      this.db.repos.workflowRun.update(
-        runId,
-        {
-          status: 'waiting_user',
-          currentStep: 'waiting_user',
-          checkpoint: checkpoint as unknown as Record<string, unknown>,
-          summary: {
-            summary: result.summary,
-            stopReason: result.stopReason,
-            waitId: created.wait.id,
-            questionsForUser: created.message.questions,
+    const issues = this.db.transaction(() =>
+      questions.map((question) =>
+        this.db.repos.workflowIssue.upsert(
+          runId,
+          {
+            issueKey: `proposal-${sha256Hex(`${stage}:${question.question}`).slice(0, 24)}`,
+            stage,
+            kind: 'ambiguity',
+            gate: 'before_apply',
+            questionText: question.question,
+            rationaleText: result.summary,
+            answerType: 'free_text',
+            options: [],
+            relatedRefs: question.relatedProposalRefs,
           },
-          finishedAt: null,
-        },
+          now,
+        ),
+      ),
+    );
+    return this.pauseForIssues(runId, checkpoint, stage, result.summary, result.stopReason, issues);
+  }
+
+  /** 独立的提案前就绪评估：先解析/解决 Issue，只有 execution gate 全部关闭才返回。 */
+  private async assessReadiness(
+    run: WorkflowRun,
+    checkpoint: RunCheckpoint,
+    stage: string,
+    context: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<WorkflowReadiness | null> {
+    const generated = await this.generateWithTrace<WorkflowReadiness>(run.id, checkpoint, stage, {
+      model: this.config.model,
+      instructions: readinessInstructions(run.workflowType),
+      input: JSON.stringify(context),
+      outputSchemaName: 'WorkflowReadiness',
+      outputSchema: WorkflowReadinessSchema,
+      maxOutputTokens: 8_192,
+      reasoningEffort: 'low',
+      safetyIdentifier: this.config.safetyIdentifier,
+      signal,
+    });
+    const result = generated.value;
+    if (result.workflowType !== run.workflowType) {
+      throw new DomainError('MODEL_OUTPUT_INVALID', 'readiness workflowType 与运行类型不一致', {
+        expected: run.workflowType,
+        actual: result.workflowType,
+      });
+    }
+    checkpoint.providerResponseId = generated.providerResponseId;
+    checkpoint.usage = addModelUsage(checkpoint.usage, generated.usage);
+    const now = this.clock.now();
+    let unresolved: WorkflowIssue[] = [];
+    this.db.transaction(() => {
+      for (const issueId of result.resolvedIssueIds) {
+        const issue = this.db.repos.workflowIssue.getById(issueId);
+        if (!issue || issue.workflowRunId !== run.id || issue.status !== 'answered') {
+          throw new DomainError(
+            'MODEL_OUTPUT_INVALID',
+            'readiness 只能解决当前 run 中已有用户回答的 issue',
+            { issueId, status: issue?.status ?? null },
+          );
+        }
+      }
+      this.db.repos.workflowIssue.resolve(
+        result.resolvedIssueIds,
+        { kind: 'readiness_resolution', summary: result.summary },
         now,
       );
-      return created;
+      for (const issue of result.issues) {
+        this.db.repos.workflowIssue.upsert(
+          run.id,
+          {
+            issueId: issue.issueId,
+            issueKey: issue.issueKey,
+            stage,
+            kind: issue.kind,
+            gate: issue.gate,
+            questionText: issue.question,
+            rationaleText: issue.rationale,
+            answerType: issue.answerType,
+            options: issue.options,
+            relatedRefs: issue.relatedRefs,
+          },
+          now,
+        );
+      }
+      unresolved = this.db.repos.workflowIssue.listUnresolvedByRun(run.id, [
+        'before_proposal',
+        'before_apply',
+      ]);
+      if (result.readiness !== 'ready' && unresolved.length === 0) {
+        unresolved = [
+          this.db.repos.workflowIssue.upsert(
+            run.id,
+            {
+              issueKey: `readiness-${sha256Hex(`${stage}:${result.summary}`).slice(0, 24)}`,
+              stage,
+              kind: 'ambiguity',
+              gate: 'before_proposal',
+              questionText: '当前信息不足以继续，请补充本任务的目标、边界或关键约束。',
+              rationaleText: result.summary,
+              answerType: 'free_text',
+              options: [],
+              relatedRefs: [],
+            },
+            now,
+          ),
+        ];
+      }
     });
-    return interaction.wait.status === 'open';
+    if (unresolved.length > 0) {
+      this.pauseForIssues(run.id, checkpoint, stage, result.summary, result.readiness, unresolved);
+      return null;
+    }
+    checkpoint.awaitingStage = null;
+    checkpoint.readiness = result;
+    checkpoint.steps.push('assess_readiness');
+    this.patch(run.id, {
+      checkpoint: checkpoint as unknown as Record<string, unknown>,
+      providerResponseId: checkpoint.providerResponseId,
+      usage: checkpoint.usage,
+    });
+    return result;
+  }
+
+  /**
+   * 在领域写入前构造虚拟工作树并运行 checker。机器可判定的结构错误最多自动修复两次；
+   * blocking Question/contradiction 转为 Issue 后重新进入评估，不允许落库。
+   */
+  private async prepareProposal(
+    run: WorkflowRun,
+    project: ProjectRecord,
+    checkpoint: RunCheckpoint,
+    context: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<ProposalPreflightResult | null> {
+    let candidate = checkpoint.proposal;
+    for (let attempt = 0; ; attempt += 1) {
+      sanitizeProposal(run.workflowType, candidate);
+      const live = this.changeSets.getLive(project);
+      const counts = live
+        ? this.db.repos.reviewItem.countsByChangeSet(live.id)
+        : { pending: 0, blocked: 0, resolved: 0 };
+      const working = withVirtualUnboxContainer(
+        this.currentWorkingSet(project),
+        run.workflowType === 'unbox' && !checkpoint.containerRevisionId,
+        project,
+      );
+      const preflight = preflightProposal({
+        projectId: project.id,
+        workingSet: working,
+        proposal: candidate,
+        reviewCounts: { pending: counts.pending, blocked: counts.blocked },
+        policies: this.db.repos.delegation.listActiveByProject(project.id),
+      });
+      if (preflight.hardBlockingIssues.length > 0) {
+        if (attempt >= MAX_PREFLIGHT_REPAIRS) {
+          throw new DomainError(
+            'MODEL_OUTPUT_INVALID',
+            '提案在自动修复后仍未通过提交前一致性检查',
+            {
+              attempts: attempt,
+              issues: preflight.hardBlockingIssues,
+            },
+          );
+        }
+        const repaired = await this.generateWithTrace(
+          run.id,
+          checkpoint,
+          `${run.workflowType}_repair_${attempt + 1}`,
+          {
+            model: this.config.model,
+            instructions: PROPOSAL_REPAIR_INSTRUCTIONS,
+            input: JSON.stringify({
+              ...context,
+              data: {
+                ...((context['data'] as Record<string, unknown> | undefined) ?? {}),
+                preflight: {
+                  attempt: attempt + 1,
+                  originalProposal: candidate,
+                  hardBlockingIssues: preflight.hardBlockingIssues,
+                },
+              },
+            }),
+            outputSchemaName: 'DesignProposal',
+            outputSchema: DesignProposalSchema,
+            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            reasoningEffort: 'medium',
+            safetyIdentifier: this.config.safetyIdentifier,
+            signal,
+          },
+        );
+        assertProposalWorkflowType(run.workflowType, repaired.value);
+        checkpoint.providerResponseId = repaired.providerResponseId;
+        checkpoint.usage = addModelUsage(checkpoint.usage, repaired.usage);
+        if (
+          this.pauseForClarification(
+            run.id,
+            checkpoint,
+            `${run.workflowType}_repair_${attempt + 1}`,
+            repaired.value,
+          )
+        ) {
+          checkpoint.proposal = null;
+          checkpoint.proposals = [];
+          this.patch(run.id, { checkpoint: checkpoint as unknown as Record<string, unknown> });
+          return null;
+        }
+        candidate = repaired.value;
+        checkpoint.proposal = candidate;
+        checkpoint.steps.push(`repair_proposal_${attempt + 1}`);
+        this.patch(run.id, {
+          checkpoint: checkpoint as unknown as Record<string, unknown>,
+          providerResponseId: checkpoint.providerResponseId,
+          usage: checkpoint.usage,
+        });
+        continue;
+      }
+      if (preflight.interactionRequests.length > 0) {
+        const now = this.clock.now();
+        const issues = this.db.transaction(() =>
+          preflight.interactionRequests.map((request) =>
+            this.db.repos.workflowIssue.upsert(
+              run.id,
+              {
+                issueKey: request.issueKey,
+                stage: `${run.workflowType}_preflight`,
+                kind: 'decision',
+                gate: 'before_apply',
+                questionText: request.questionText,
+                rationaleText: request.rationaleText,
+                answerType: 'free_text',
+                options: [],
+                relatedRefs: request.relatedRefs,
+              },
+              now,
+            ),
+          ),
+        );
+        checkpoint.proposal = null;
+        checkpoint.proposals = [];
+        checkpoint.readiness = null;
+        this.pauseForIssues(
+          run.id,
+          checkpoint,
+          `${run.workflowType}_preflight`,
+          '提案预检发现仍需用户裁决的设计分歧，当前提案尚未写入。',
+          'needs_user',
+          issues,
+        );
+        return null;
+      }
+      checkpoint.proposal = candidate;
+      checkpoint.steps.push('preflight_proposal');
+      return preflight;
+    }
   }
 
   /** 对话是 data 下的不可信任务输入，不依赖 provider 会话，进程重启后可完整重放。 */
@@ -667,7 +965,6 @@ export class CoreWorkflowRunner {
     context: Record<string, unknown>,
   ): Record<string, unknown> {
     const messages = this.db.repos.workflowInteraction.listMessages(runId);
-    if (messages.length === 0) return context;
     const conversation = messages.map((message: WorkflowMessage) => ({
       messageId: message.id,
       sequence: message.sequence,
@@ -690,11 +987,28 @@ export class CoreWorkflowRunner {
         };
       }),
     }));
+    const issues = this.db.repos.workflowIssue.listByRun(runId).map((issue) => ({
+      issueId: issue.id,
+      issueKey: issue.issueKey,
+      stage: issue.stage,
+      kind: issue.kind,
+      gate: issue.gate,
+      status: issue.status,
+      questionText: issue.questionText,
+      rationaleText: issue.rationaleText,
+      answerType: issue.answerType,
+      options: issue.options,
+      relatedRefs: issue.relatedRefs,
+      answeredByMessageId: issue.answeredByMessageId,
+      resolution: issue.resolution,
+    }));
+    if (conversation.length === 0 && issues.length === 0) return context;
     return {
       ...context,
       data: {
         ...((context['data'] as Record<string, unknown> | undefined) ?? {}),
         workflowConversation: conversation,
+        workflowIssues: issues,
       },
     };
   }
@@ -788,8 +1102,30 @@ export class CoreWorkflowRunner {
       // ---- generate（幂等：checkpoint 已有 proposal 则跳过）----
       const agentAuthor = author;
       if (!checkpoint.proposal) {
-        if (run.workflowType === 'initialize') {
-          // §13.1：第一步提取非 root 候选，第二步 root 候选与矛盾
+        const legacyInitialize =
+          run.workflowType === 'initialize' && (checkpoint.proposals?.length ?? 0) > 0;
+        if (!legacyInitialize) {
+          const readiness = await this.assessReadiness(
+            run,
+            checkpoint,
+            `${run.workflowType}_readiness`,
+            context,
+            controller.signal,
+          );
+          if (!readiness) return;
+          this.assertNotCancelled(runId);
+          context = this.attachConversation(run.id, context);
+          context = {
+            ...context,
+            data: {
+              ...((context['data'] as Record<string, unknown> | undefined) ?? {}),
+              workflowReadiness: readiness,
+            },
+          };
+        }
+
+        if (legacyInitialize) {
+          // 仅为升级时恢复旧 checkpoint 保留；新 run 不再使用跨阶段提案拼接。
           let firstProposal = checkpoint.proposals?.[0];
           if (!firstProposal) {
             const first = await this.generateWithTrace(runId, checkpoint, 'initialize_extract', {
@@ -855,6 +1191,26 @@ export class CoreWorkflowRunner {
           }
           // 合并两步提案（root 步在前，保证 root 节点先建）
           checkpoint.proposal = mergeProposals([secondProposal, firstProposal]);
+        } else if (run.workflowType === 'initialize') {
+          const result = await this.generateWithTrace(runId, checkpoint, 'initialize_project', {
+            model: this.config.model,
+            instructions: INITIALIZE_INSTRUCTIONS,
+            input: JSON.stringify(context),
+            outputSchemaName: 'DesignProposal',
+            outputSchema: DesignProposalSchema,
+            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            reasoningEffort: 'medium',
+            safetyIdentifier: this.config.safetyIdentifier,
+            signal: controller.signal,
+          });
+          this.assertNotCancelled(runId);
+          assertProposalWorkflowType('initialize', result.value);
+          checkpoint.providerResponseId = result.providerResponseId;
+          checkpoint.usage = addModelUsage(checkpoint.usage, result.usage);
+          if (this.pauseForClarification(run.id, checkpoint, 'initialize_project', result.value)) {
+            return;
+          }
+          checkpoint.proposal = result.value;
         } else {
           // derive/grill/unbox 单次生成；grill/unbox 用 high reasoning（§12.2 默认推理档）
           const instructions =
@@ -877,7 +1233,7 @@ export class CoreWorkflowRunner {
             signal: controller.signal,
           });
           checkpoint.providerResponseId = result.providerResponseId;
-          checkpoint.usage = result.usage as unknown as Record<string, unknown>;
+          checkpoint.usage = addModelUsage(checkpoint.usage, result.usage);
           if (this.pauseForClarification(run.id, checkpoint, run.workflowType, result.value)) {
             return;
           }
@@ -896,7 +1252,7 @@ export class CoreWorkflowRunner {
       this.assertNotCancelled(runId);
 
       // ---- validate_output（schema 校验在 provider 内已完成，此处复核）----
-      const proposal = checkpoint.proposal as {
+      let proposal = checkpoint.proposal as {
         nodeActions: unknown[];
         relationActions: unknown[];
         questionsForUser: Array<{ blocking: boolean }>;
@@ -915,7 +1271,15 @@ export class CoreWorkflowRunner {
       let autoAdoptBlocked: string | null = null;
       const effectivePolicy = this.resolveEffectivePolicy(run);
       if (!checkpoint.applied) {
-        sanitizeProposal(run.workflowType, checkpoint.proposal);
+        const preflight = await this.prepareProposal(
+          run,
+          project,
+          checkpoint,
+          context,
+          controller.signal,
+        );
+        if (!preflight) return;
+        proposal = checkpoint.proposal as typeof proposal;
         let proposalToApply = checkpoint.proposal;
         let createdContainerRevisionId: string | null = null;
         const result = this.db.transaction(() => {
@@ -988,17 +1352,23 @@ export class CoreWorkflowRunner {
       }
 
       // ---- finish ----
+      const approvalIssues = this.syncApprovalIssues(run, project);
       const hasBlockingQuestion = proposal.questionsForUser.some((q) => q.blocking);
       const finalStatus =
-        hasBlockingQuestion || proposal.stopReason === 'needs_user' || autoAdoptBlocked !== null
+        hasBlockingQuestion ||
+        proposal.stopReason === 'needs_user' ||
+        autoAdoptBlocked !== null ||
+        approvalIssues.length > 0
           ? 'waiting_user'
           : 'succeeded';
+      const currentStep =
+        approvalIssues.length > 0 && autoAdoptBlocked === null ? 'waiting_approval' : finalStatus;
       const now = this.clock.now();
       this.db.repos.workflowRun.update(
         runId,
         {
           status: finalStatus,
-          currentStep: finalStatus,
+          currentStep,
           summary: {
             summary: proposal.summary,
             stopReason: proposal.stopReason,
@@ -1009,6 +1379,13 @@ export class CoreWorkflowRunner {
             applied: checkpoint.applied,
             autoAdopted: checkpoint.autoAdopted === true,
             autoAdoptBlocked,
+            waitingReason:
+              approvalIssues.length > 0
+                ? 'approval_required'
+                : autoAdoptBlocked !== null
+                  ? 'auto_adopt_blocked'
+                  : null,
+            approvalIssueIds: approvalIssues.map((issue) => issue.id),
           },
           finishedAt: finalStatus === 'succeeded' ? now : null,
         },
@@ -1044,6 +1421,51 @@ export class CoreWorkflowRunner {
     return live
       ? this.changeSets.buildViews(live).working
       : this.changeSets.buildReleaseView(project);
+  }
+
+  /** root 的人工确认是提交后的审批 gate，不与运行时澄清或图谱 Question 混用。 */
+  private syncApprovalIssues(run: WorkflowRun, project: ProjectRecord): WorkflowIssue[] {
+    const working = this.currentWorkingSet(project);
+    const roots = [...working.nodeRevisionByNodeId.values()].filter((revision) =>
+      revision.roles.includes('root'),
+    );
+    const pendingKeys = new Set<string>();
+    const now = this.clock.now();
+    this.db.transaction(() => {
+      for (const root of roots) {
+        const key = `root-${root.nodeId}-${root.revisionNumber}`;
+        if (root.approvalState === 'user_confirmed') continue;
+        pendingKeys.add(key);
+        this.db.repos.workflowIssue.upsert(
+          run.id,
+          {
+            issueKey: key,
+            stage: `${run.workflowType}_approval`,
+            kind: 'approval',
+            gate: 'before_release',
+            questionText: `请确认根节点“${root.displayTitle}”后继续。`,
+            rationaleText: 'root 修订必须由用户明确确认，Agent 不能代替审批。',
+            answerType: 'confirmation',
+            options: ['确认'],
+            relatedRefs: [root.nodeId],
+          },
+          now,
+        );
+      }
+      for (const issue of this.db.repos.workflowIssue.listUnresolvedByRun(run.id, [
+        'before_release',
+      ])) {
+        if (issue.kind !== 'approval' || pendingKeys.has(issue.issueKey)) continue;
+        this.db.repos.workflowIssue.resolve(
+          [issue.id],
+          { kind: 'approval_observed', checkedAt: now },
+          now,
+        );
+      }
+    });
+    return this.db.repos.workflowIssue
+      .listUnresolvedByRun(run.id, ['before_release'])
+      .filter((issue) => issue.kind === 'approval');
   }
 
   /** ai_confirmed 授权来源：derive 目标节点的有效托管策略（§10/§12.4）。 */
@@ -1115,10 +1537,26 @@ export class CoreWorkflowRunner {
           roots,
           batch.map((item) => this.reevaluationItemView(item)),
         );
+        const batchNumber = (checkpoint.batches?.length ?? 0) + 1;
         context = this.attachConversation(run.id, context);
+        const readiness = await this.assessReadiness(
+          run,
+          checkpoint,
+          `reevaluate_batch_${batchNumber}_readiness`,
+          context,
+          controller.signal,
+        );
+        if (!readiness) return;
+        context = this.attachConversation(run.id, context);
+        context = {
+          ...context,
+          data: {
+            ...((context['data'] as Record<string, unknown> | undefined) ?? {}),
+            workflowReadiness: readiness,
+          },
+        };
         checkpoint.awaitingStage = null;
         checkpoint.contextHash = sha256Hex(JSON.stringify(context));
-        const batchNumber = (checkpoint.batches?.length ?? 0) + 1;
         const generated = await this.generateWithTrace(
           runId,
           checkpoint,
@@ -1138,7 +1576,7 @@ export class CoreWorkflowRunner {
         this.assertNotCancelled(runId);
         this.validateBatchResult(batch, generated.value);
         checkpoint.providerResponseId = generated.providerResponseId;
-        checkpoint.usage = generated.usage as unknown as Record<string, unknown>;
+        checkpoint.usage = addModelUsage(checkpoint.usage, generated.usage);
         if (
           this.pauseForClarification(
             run.id,
@@ -1147,6 +1585,52 @@ export class CoreWorkflowRunner {
             generated.value,
           )
         ) {
+          return;
+        }
+        const synthetic = batchResultAsProposal(generated.value as BatchResultShape);
+        sanitizeProposal(run.workflowType, synthetic);
+        const counts = this.db.repos.reviewItem.countsByChangeSet(changeSet.id);
+        const preflight = preflightProposal({
+          projectId: project.id,
+          workingSet: this.changeSets.buildViews(changeSet).working,
+          proposal: synthetic,
+          reviewCounts: { pending: counts.pending, blocked: counts.blocked },
+          policies: this.db.repos.delegation.listActiveByProject(project.id),
+        });
+        if (preflight.hardBlockingIssues.length > 0) {
+          throw new DomainError('MODEL_OUTPUT_INVALID', '复核批次提案未通过提交前一致性检查', {
+            issues: preflight.hardBlockingIssues,
+          });
+        }
+        if (preflight.interactionRequests.length > 0) {
+          const now = this.clock.now();
+          const issues = this.db.transaction(() =>
+            preflight.interactionRequests.map((request) =>
+              this.db.repos.workflowIssue.upsert(
+                run.id,
+                {
+                  issueKey: request.issueKey,
+                  stage: `reevaluate_batch_${batchNumber}_preflight`,
+                  kind: 'decision',
+                  gate: 'before_apply',
+                  questionText: request.questionText,
+                  rationaleText: request.rationaleText,
+                  answerType: 'free_text',
+                  options: [],
+                  relatedRefs: request.relatedRefs,
+                },
+                now,
+              ),
+            ),
+          );
+          this.pauseForIssues(
+            run.id,
+            checkpoint,
+            `reevaluate_batch_${batchNumber}_preflight`,
+            '复核批次预检发现仍需用户裁决的设计分歧，当前批次尚未写入。',
+            'needs_user',
+            issues,
+          );
           return;
         }
         batchState = { itemIds: batchIds, result: generated.value, applied: null };
@@ -1158,16 +1642,7 @@ export class CoreWorkflowRunner {
       const result = batchState.result as BatchResultShape;
       if (!batchState.applied) {
         // 批次附带的修订/迁移动作复用 ProposalApplier 原子写入
-        const synthetic = {
-          schemaVersion: 1,
-          workflowType: 'derive',
-          summary: result.summary,
-          nodeActions: result.nodeActions,
-          relationActions: result.relationActions,
-          questionsForUser: result.questionsForUser,
-          warnings: [],
-          stopReason: result.stopReason,
-        };
+        const synthetic = batchResultAsProposal(result);
         const applied = this.db.transaction(() => {
           // 与主路径一致：先做防御性归一（epistemicState 仅 epistemic 类型适用）
           sanitizeProposal(run.workflowType, synthetic);
@@ -1537,8 +2012,71 @@ interface BatchResultShape {
   stopReason: string;
 }
 
+function batchResultAsProposal(result: BatchResultShape) {
+  return {
+    schemaVersion: 1 as const,
+    workflowType: 'derive' as const,
+    summary: result.summary,
+    nodeActions: result.nodeActions,
+    relationActions: result.relationActions,
+    questionsForUser: result.questionsForUser,
+    warnings: [] as string[],
+    stopReason: result.stopReason,
+  };
+}
+
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
+/** 单问题自由文本回复自动绑定到稳定 Issue ID；多问题仍要求客户端显式逐项绑定。 */
+function normalizeWorkflowAnswers(
+  prompt: WorkflowMessage,
+  message: string,
+  answers: WorkflowAnswer[],
+): WorkflowAnswer[] {
+  if (answers.length > 0 || prompt.questions.length !== 1) return answers;
+  return [{ questionId: prompt.questions[0]!.id, answerText: message }];
+}
+
+function withVirtualUnboxContainer(
+  working: WorkingSet,
+  needed: boolean,
+  project: ProjectRecord,
+): WorkingSet {
+  if (!needed) return working;
+  const nodeId = asId<import('@treediagram/contracts').NodeId>(UNBOX_CONTAINER_NODE_REF);
+  const revisionId = asId<import('@treediagram/contracts').NodeRevisionId>(
+    UNBOX_CONTAINER_REVISION_REF,
+  );
+  const nodeById = new Map(working.nodeById);
+  const nodeRevisionByNodeId = new Map(working.nodeRevisionByNodeId);
+  nodeById.set(nodeId, {
+    id: nodeId,
+    projectId: project.id,
+    nodeType: 'topic',
+    authorKind: 'agent',
+    authorRef: 'preflight',
+    createdAt: '1970-01-01T00:00:00.000Z',
+  });
+  nodeRevisionByNodeId.set(nodeId, {
+    id: revisionId,
+    nodeId,
+    createdInChangeSetId: asId('00000000-0000-4000-8000-000000000000'),
+    revisionNumber: 1,
+    displayTitle: 'Unbox 虚拟容器',
+    contentText: '',
+    roles: ['unbox_exploration'],
+    attributes: {},
+    approvalState: 'draft',
+    epistemicState: null,
+    authorization: null,
+    supersedesRevisionId: null,
+    authorKind: 'agent',
+    authorRef: 'preflight',
+    createdAt: '1970-01-01T00:00:00.000Z',
+  });
+  return { ...working, nodeById, nodeRevisionByNodeId };
 }
 
 function addModelUsage(

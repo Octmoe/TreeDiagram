@@ -7,6 +7,10 @@ import {
   RelationIdSchema,
   RelationRevisionIdSchema,
   ReviewItemIdSchema,
+  WorkflowAnswerTypeSchema,
+  WorkflowIssueGateSchema,
+  WorkflowIssueIdSchema,
+  WorkflowIssueKindSchema,
   LIMITS,
   Nullable,
   ReviewVerdictSchema,
@@ -106,6 +110,56 @@ const stopReasonSchema = Type.Union([
   Type.Literal('needs_user'),
   Type.Literal('insufficient_context'),
 ]);
+
+export const WorkflowReadinessIssueSchema = Type.Object(
+  {
+    issueId: Nullable(WorkflowIssueIdSchema),
+    issueKey: Type.String({ minLength: 1, maxLength: LIMITS.proposalRef }),
+    kind: WorkflowIssueKindSchema,
+    gate: WorkflowIssueGateSchema,
+    question: Type.String({ minLength: 1, maxLength: LIMITS.rationale }),
+    rationale: Type.String({ maxLength: LIMITS.rationale }),
+    answerType: WorkflowAnswerTypeSchema,
+    options: Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.displayTitle }), {
+      maxItems: 20,
+    }),
+    relatedRefs: Type.Array(proposalRefSchema, { maxItems: 20 }),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowReadinessIssue = Static<typeof WorkflowReadinessIssueSchema>;
+
+/**
+ * 提案生成之前的独立就绪评估。它刻意不包含任何 node/relation action，避免模型在
+ * 同一结构化回合中一边声明信息不足、一边提交基于猜测的图谱修改。
+ */
+export const WorkflowReadinessSchema = Type.Object(
+  {
+    schemaVersion: Type.Literal(1),
+    workflowType: Type.Union([
+      Type.Literal('initialize'),
+      Type.Literal('derive'),
+      Type.Literal('grill'),
+      Type.Literal('unbox'),
+      Type.Literal('reevaluate'),
+    ]),
+    summary: Type.String({ maxLength: LIMITS.summary }),
+    normalizedBrief: Type.String({ minLength: 1, maxLength: LIMITS.contentText }),
+    readiness: Type.Union([
+      Type.Literal('ready'),
+      Type.Literal('needs_user'),
+      Type.Literal('insufficient_context'),
+    ]),
+    issues: Type.Array(WorkflowReadinessIssueSchema, { maxItems: 20 }),
+    resolvedIssueIds: Type.Array(WorkflowIssueIdSchema, { maxItems: 20 }),
+    assumptions: Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.rationale }), {
+      maxItems: 50,
+    }),
+    warnings: Type.Array(Type.String({ maxLength: LIMITS.rationale }), { maxItems: 50 }),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowReadiness = Static<typeof WorkflowReadinessSchema>;
 
 export const DesignProposalSchema = Type.Object(
   {

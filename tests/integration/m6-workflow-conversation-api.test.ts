@@ -102,8 +102,10 @@ describe('M6 Workflow 对话 HTTP API', () => {
         ],
         stopReason: 'insufficient_context',
       }),
-      proposal({ nodeActions: [nodeAction('c1')] }),
-      proposal({ nodeActions: [nodeAction('root1', true)], relationActions: [containsAction()] }),
+      proposal({
+        nodeActions: [nodeAction('root1', true), nodeAction('c1')],
+        relationActions: [containsAction()],
+      }),
     ]);
     const runner = new CoreWorkflowRunner(
       { db: opened.db, clock: systemClock },
@@ -205,9 +207,10 @@ describe('M6 Workflow 对话 HTTP API', () => {
     });
     expect(duplicate.statusCode).toBe(202);
 
-    await waitForStatus(app, adminToken, runId, 'succeeded');
-    expect(provider.calls).toHaveLength(3);
-    expect(provider.calls[1]!.input).toContain('软件架构图');
+    const final = await waitForStatus(app, adminToken, runId, 'waiting_user');
+    expect(final.currentStep).toBe('waiting_approval');
+    expect(provider.calls).toHaveLength(4);
+    expect(provider.calls[2]!.input).toContain('软件架构图');
     const finalConversation = await app.inject({
       method: 'GET',
       url: `/api/v1/workflows/${runId}/messages`,

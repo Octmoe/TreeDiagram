@@ -147,6 +147,12 @@ describe('M4 grill 工作流（§13.3）', () => {
     setConsistent(ws);
     const target = quickNode(ws, { title: '被审查分支' });
     const child = quickNode(ws, { title: '既有子节点' }, target);
+    const parentRelation = ws.db.repos.relation
+      .listRelationsByProject(ws.project.id)
+      .find((relation) => relation.relationType === 'contains')!;
+    const parentRelationRevision = ws.db.repos.relation.listRevisionsByRelation(
+      parentRelation.id,
+    )[0]!;
     const provider = FakeModelProvider.scripted([
       proposal(
         [
@@ -166,6 +172,18 @@ describe('M4 grill 工作流（§13.3）', () => {
             { refKind: 'existing_revision', ref: target.revision.id },
             { refKind: 'proposal', ref: 'q1' },
           ),
+          {
+            proposalRef: 'migrate-child-parent',
+            operation: 'revise',
+            logicalRelationId: parentRelation.id,
+            baseRelationRevisionId: parentRelationRevision.id,
+            relationType: 'contains',
+            from: { refKind: 'existing_revision', ref: target.revision.id },
+            to: { refKind: 'proposal', ref: 'rev1' },
+            rationale: '节点修订后显式迁移父关系端点',
+            attributes: null,
+            approvalSuggestion: 'draft',
+          },
         ],
       ),
     ]);
@@ -174,12 +192,12 @@ describe('M4 grill 工作流（§13.3）', () => {
     const final = await runner.waitForCompletion(run.id);
 
     expect(final.status).toBe('succeeded');
-    expect(provider.calls).toHaveLength(1);
-    expect(provider.calls[0]!.instructions).toBe(GRILL_INSTRUCTIONS);
-    expect(provider.calls[0]!.reasoningEffort).toBe('high');
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[1]!.instructions).toBe(GRILL_INSTRUCTIONS);
+    expect(provider.calls[1]!.reasoningEffort).toBe('high');
     // 上下文含目标与子树内容
-    expect(provider.calls[0]!.input).toContain('被审查分支');
-    expect(provider.calls[0]!.input).toContain('既有子节点');
+    expect(provider.calls[1]!.input).toContain('被审查分支');
+    expect(provider.calls[1]!.input).toContain('既有子节点');
     // revise 被强制 draft
     const summary = final.summary as { warnings: string[]; applied: { nodeRevisionIds: string[] } };
     expect(summary.warnings.some((w) => w.includes('强制降级为 draft'))).toBe(true);
@@ -250,8 +268,8 @@ describe('M4 unbox 工作流（§13.4）', () => {
     const final = await runner.waitForCompletion(run.id);
 
     expect(final.status).toBe('succeeded');
-    expect(provider.calls[0]!.instructions).toBe(UNBOX_INSTRUCTIONS);
-    expect(provider.calls[0]!.reasoningEffort).toBe('high');
+    expect(provider.calls[1]!.instructions).toBe(UNBOX_INSTRUCTIONS);
+    expect(provider.calls[1]!.reasoningEffort).toBe('high');
     // 容器候选已创建
     const allNodes = ws.db.repos.node.listNodesByProject(ws.project.id);
     const containerNode = allNodes.find((n) =>
@@ -339,7 +357,7 @@ describe('M4 unbox 工作流（§13.4）', () => {
     });
     const final = await runner.waitForCompletion(run.id);
     expect(final.status).toBe('succeeded');
-    expect(provider.calls[1]!.input).toContain('保留离线回退路径');
+    expect(provider.calls[3]!.input).toContain('保留离线回退路径');
     const container = ws.db.repos.node
       .listNodesByProject(ws.project.id)
       .find((node) =>

@@ -5,8 +5,7 @@ import {
   DERIVE_INSTRUCTIONS,
   FakeModelProvider,
   GRILL_INSTRUCTIONS,
-  INITIALIZE_EXTRACT_INSTRUCTIONS,
-  INITIALIZE_ROOT_INSTRUCTIONS,
+  INITIALIZE_INSTRUCTIONS,
   REEVALUATE_INSTRUCTIONS,
   UNBOX_INSTRUCTIONS,
   userAuthor,
@@ -200,25 +199,8 @@ describe('M5 贯穿验收（V1_SPEC §15）', () => {
         };
       };
       switch (req.instructions) {
-        case INITIALIZE_EXTRACT_INSTRUCTIONS:
-          // 步骤 2：未确认细节保留为 Assumption；序列化分支作为 topic
-          return proposal(
-            'initialize',
-            [
-              nodeAction('asm', {
-                displayTitle: '假设：使用 TypeScript 并本地单机运行',
-                contentText: '用户偏好但未确认的技术细节，保留为 Assumption。',
-                epistemicState: 'assumed',
-              }),
-              nodeAction('branch', {
-                nodeType: 'topic',
-                displayTitle: '序列化细节分支',
-                contentText: '承载序列化格式的局部决策。',
-              }),
-            ],
-            [],
-          );
-        case INITIALIZE_ROOT_INSTRUCTIONS:
+        case INITIALIZE_INSTRUCTIONS:
+          // 步骤 2：就绪后一次投影 root、Assumption 与序列化分支
           return proposal(
             'initialize',
             [
@@ -228,6 +210,16 @@ describe('M5 贯穿验收（V1_SPEC §15）', () => {
                 contentText: '根部目标命题（待用户确认）。',
                 roles: ['root'],
                 attributes: { priorityNote: null },
+              }),
+              nodeAction('asm', {
+                displayTitle: '假设：使用 TypeScript 并本地单机运行',
+                contentText: '用户偏好但未确认的技术细节，保留为 Assumption。',
+                epistemicState: 'assumed',
+              }),
+              nodeAction('branch', {
+                nodeType: 'topic',
+                displayTitle: '序列化细节分支',
+                contentText: '承载序列化格式的局部决策。',
               }),
             ],
             [
@@ -393,7 +385,7 @@ describe('M5 贯穿验收（V1_SPEC §15）', () => {
       freshProject(ws),
       request({ workflowType: 'initialize', sourceAssetIds: [source.id] }),
     );
-    expect((await runner.waitForCompletion(initRun.id)).status).toBe('succeeded');
+    expect((await runner.waitForCompletion(initRun.id)).currentStep).toBe('waiting_approval');
 
     // 根部候选与 Assumption 已落库（tentative / assumed）
     const workingNodes = () =>
@@ -423,6 +415,8 @@ describe('M5 贯穿验收（V1_SPEC §15）', () => {
     // 根修订使 contains 端点失效：必须经 reevaluate 显式迁移（禁止静默迁移）
     state.oldRootRevisionId = root.revision.id;
     state.newRootRevisionId = confirmedRoot.revision.id;
+    runner.resume(freshProject(ws), initRun.id);
+    expect((await runner.waitForCompletion(initRun.id)).status).toBe('succeeded');
     const cs1 = ws.services.changeSets.getLive(freshProject(ws))!;
     ws.services.changeSets.adopt(cs1.id, userAuthor);
     const reevalRun1 = runner.start(

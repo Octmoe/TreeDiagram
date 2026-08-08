@@ -5,8 +5,7 @@ import {
   CoreWorkflowRunner,
   DomainError,
   FakeModelProvider,
-  INITIALIZE_EXTRACT_INSTRUCTIONS,
-  INITIALIZE_ROOT_INSTRUCTIONS,
+  INITIALIZE_INSTRUCTIONS,
   modelError,
   type ModelProvider,
   userAuthor,
@@ -81,6 +80,20 @@ function proposal(nodeActions: unknown[], relationActions: unknown[], overrides 
   };
 }
 
+function readyAssessment(workflowType: StartWorkflowRequest['workflowType']) {
+  return {
+    schemaVersion: 1,
+    workflowType,
+    summary: '测试就绪',
+    normalizedBrief: '测试规范化任务简报',
+    readiness: 'ready',
+    issues: [],
+    resolvedIssueIds: [],
+    assumptions: [],
+    warnings: [],
+  };
+}
+
 function setConsistent(ws: TestWorkspace): void {
   ws.db.repos.project.updateStatus(ws.project.id, 'consistent', null, ws.clock.now());
 }
@@ -94,7 +107,7 @@ const deriveRequest = (targetNodeId: string): StartWorkflowRequest => ({
 });
 
 describe('M3 initialize 工作流（§13.1）', () => {
-  it('两步生成 → 合并提案 → 应用 → succeeded', async () => {
+  it('独立就绪评估 → 一次完整投影 → 预检 → 应用 → 等待 root 审批', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(
       ws.project.id,
@@ -107,11 +120,8 @@ describe('M3 initialize 工作流（§13.1）', () => {
       userAuthor,
     );
     const provider = FakeModelProvider.scripted([
-      // 第一步：提取非 root 候选
-      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
-      // 第二步：root 候选与矛盾（合并时 root 在前）
       proposal(
-        [nodeAction('root1', { roles: ['root'] })],
+        [nodeAction('root1', { roles: ['root'] }), nodeAction('c1')],
         [
           containsAction(
             'r1',
@@ -132,21 +142,22 @@ describe('M3 initialize 工作流（§13.1）', () => {
     });
     const final = await runner.waitForCompletion(run.id);
 
-    expect(final.status).toBe('succeeded');
+    expect(final.status).toBe('waiting_user');
+    expect(final.currentStep).toBe('waiting_approval');
     expect(final.changeSetId).not.toBeNull();
     expect(final.providerResponseId).toBe('fake-1');
-    // 两次生成：extract → root，指令不同
+    // 两次模型调用：readiness → 单次完整图谱投影
     expect(provider.calls).toHaveLength(2);
-    expect(provider.calls[0]!.instructions).toBe(INITIALIZE_EXTRACT_INSTRUCTIONS);
-    expect(provider.calls[1]!.instructions).toBe(INITIALIZE_ROOT_INSTRUCTIONS);
+    expect(provider.calls[0]!.outputSchemaName).toBe('WorkflowReadiness');
+    expect(provider.calls[1]!.instructions).toBe(INITIALIZE_INSTRUCTIONS);
     expect(provider.calls[0]!.input).toContain('设计输入原文');
     // checkpoint 步骤完整
     const steps = (final.checkpoint as { steps: string[] }).steps;
     expect(steps).toEqual(
       expect.arrayContaining([
         'load_context',
-        'generate_extract',
-        'generate_root',
+        'assess_readiness',
+        'preflight_proposal',
         'validate_output',
         'apply_proposal',
       ]),
@@ -162,7 +173,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
     expect(summary.relationActionCount).toBe(1);
   });
 
-  it('模糊 source 在 extract 阶段先对话澄清，回答后才生成并一次应用完整提案', async () => {
+  it('提案阶段遗漏的澄清也转为 Issue，回答后重新评估并一次应用完整提案', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(
       ws.project.id,
@@ -187,9 +198,8 @@ describe('M3 initialize 工作流（§13.1）', () => {
         ],
         stopReason: 'insufficient_context',
       }),
-      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
       proposal(
-        [nodeAction('root1', { roles: ['root'] })],
+        [nodeAction('root1', { roles: ['root'] }), nodeAction('c1')],
         [
           containsAction(
             'root-rel1',
@@ -211,7 +221,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
 
     const waiting = await runner.waitForCompletion(run.id);
     expect(waiting.status).toBe('waiting_user');
-    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls).toHaveLength(2);
     expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(0);
     const openWait = ws.db.repos.workflowInteraction.getOpenWait(run.id)!;
     const clientMessageId = asId(randomUUID());
@@ -239,18 +249,18 @@ describe('M3 initialize 工作流（§13.1）', () => {
     ).toThrowError(/不接受用户回答/);
 
     const final = await runner.waitForCompletion(run.id);
-    expect(final.status).toBe('succeeded');
-    expect(provider.calls).toHaveLength(3);
-    expect(provider.calls[1]!.instructions).toBe(INITIALIZE_EXTRACT_INSTRUCTIONS);
-    expect(provider.calls[1]!.input).toContain('面向软件架构图');
-    expect(provider.calls[2]!.instructions).toBe(INITIALIZE_ROOT_INSTRUCTIONS);
+    expect(final.currentStep).toBe('waiting_approval');
+    expect(provider.calls).toHaveLength(4);
+    expect(provider.calls[2]!.outputSchemaName).toBe('WorkflowReadiness');
+    expect(provider.calls[2]!.input).toContain('面向软件架构图');
+    expect(provider.calls[3]!.instructions).toBe(INITIALIZE_INSTRUCTIONS);
     expect(ws.db.repos.workflowInteraction.listMessages(run.id)).toHaveLength(2);
     expect(ws.db.repos.workflowInteraction.getOpenWait(run.id)).toBeNull();
     expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(2);
     expect(ws.db.repos.relation.listRelationsByProject(ws.project.id)).toHaveLength(1);
   });
 
-  it('开发 FakeProvider 可完成两阶段 initialize，并产出 root 与 contains', async () => {
+  it('开发 FakeProvider 完成就绪评估和完整 initialize 投影', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(
       ws.project.id,
@@ -274,16 +284,16 @@ describe('M3 initialize 工作流（§13.1）', () => {
 
     const final = await runner.waitForCompletion(run.id);
 
-    expect(final.status).toBe('succeeded');
+    expect(final.currentStep).toBe('waiting_approval');
     expect(provider.calls).toHaveLength(2);
     const revisions = ws.db.repos.node
       .listNodesByProject(ws.project.id)
       .flatMap((node) => ws.db.repos.node.listRevisionsByNode(node.id));
     expect(revisions.some((revision) => revision?.roles.includes('root'))).toBe(true);
-    expect(ws.db.repos.relation.listRelationsByProject(ws.project.id)).toHaveLength(1);
+    expect(ws.db.repos.relation.listRelationsByProject(ws.project.id)).toHaveLength(0);
   });
 
-  it('root 阶段失败后 resume 复用已持久化的 extract 提案，不重复调用第一阶段', async () => {
+  it('自动修复失败后 resume 复用原始投影，不重复 readiness/plan', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(
       ws.project.id,
@@ -297,9 +307,9 @@ describe('M3 initialize 工作流（§13.1）', () => {
     );
     const provider = FakeModelProvider.scripted([
       proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
-      modelError('MODEL_PROVIDER_FAILED', 'root 阶段临时失败', { retryable: false }),
+      modelError('MODEL_PROVIDER_FAILED', '修复阶段临时失败', { retryable: false }),
       proposal(
-        [nodeAction('root1', { roles: ['root'] })],
+        [nodeAction('root1', { roles: ['root'] }), nodeAction('c1')],
         [
           containsAction(
             'r1',
@@ -320,35 +330,36 @@ describe('M3 initialize 工作流（§13.1）', () => {
     });
     const failed = await runner.waitForCompletion(run.id);
     expect(failed.status).toBe('failed');
-    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls).toHaveLength(3);
     expect(
       (failed.checkpoint['modelCalls'] as Array<{ stage: string; status: string }>).map(
         ({ stage, status }) => ({ stage, status }),
       ),
     ).toEqual([
-      { stage: 'initialize_extract', status: 'succeeded' },
-      { stage: 'initialize_root', status: 'failed' },
+      { stage: 'initialize_readiness', status: 'succeeded' },
+      { stage: 'initialize_project', status: 'succeeded' },
+      { stage: 'initialize_repair_1', status: 'failed' },
     ]);
 
     runner.resume(freshProject(ws), run.id);
     const final = await runner.waitForCompletion(run.id);
 
-    expect(final.status).toBe('succeeded');
-    expect(provider.calls).toHaveLength(3);
-    expect(provider.calls[2]!.instructions).toBe(INITIALIZE_ROOT_INSTRUCTIONS);
-    expect(provider.calls[2]!.input).toContain('"proposalRef":"c1"');
+    expect(final.currentStep).toBe('waiting_approval');
+    expect(provider.calls).toHaveLength(4);
+    expect(provider.calls[3]!.input).toContain('"proposalRef":"c1"');
     expect(
       (final.checkpoint['modelCalls'] as Array<{ stage: string; status: string }>).map(
         ({ stage, status }) => ({ stage, status }),
       ),
     ).toEqual([
-      { stage: 'initialize_extract', status: 'succeeded' },
-      { stage: 'initialize_root', status: 'failed' },
-      { stage: 'initialize_root', status: 'succeeded' },
+      { stage: 'initialize_readiness', status: 'succeeded' },
+      { stage: 'initialize_project', status: 'succeeded' },
+      { stage: 'initialize_repair_1', status: 'failed' },
+      { stage: 'initialize_repair_1', status: 'succeeded' },
     ]);
   });
 
-  it('两阶段 initialize 汇总两次 provider token 用量', async () => {
+  it('initialize 汇总 readiness 与 proposal 两次 provider token 用量', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(
       ws.project.id,
@@ -361,8 +372,8 @@ describe('M3 initialize 工作流（§13.1）', () => {
       userAuthor,
     );
     const values = [
-      proposal([nodeAction('c1')], [], { workflowType: 'initialize' }),
-      proposal([nodeAction('root1', { roles: ['root'] })], [], {
+      readyAssessment('initialize'),
+      proposal([nodeAction('root1', { roles: ['root'] }), nodeAction('c1')], [], {
         workflowType: 'initialize',
       }),
     ];
@@ -393,7 +404,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
 
     const final = await runner.waitForCompletion(run.id);
 
-    expect(final.status).toBe('succeeded');
+    expect(final.currentStep).toBe('waiting_approval');
     expect(final.usage).toEqual({ inputTokens: 30, outputTokens: 5, totalTokens: 35 });
     expect((final.checkpoint as { usage: unknown }).usage).toEqual(final.usage);
   });
@@ -414,7 +425,14 @@ describe('M3 derive 工作流（§13.2）', () => {
     });
     const provider: ModelProvider = {
       providerName: 'trace-test',
-      async generateStructured<T>() {
+      async generateStructured<T>(request) {
+        if (request.outputSchemaName === 'WorkflowReadiness') {
+          return {
+            value: readyAssessment('derive') as T,
+            providerResponseId: 'trace-readiness-1',
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
         await gate;
         return {
           value: proposal([nodeAction('trace-child')], []) as T,
@@ -438,11 +456,11 @@ describe('M3 derive 工作流（§13.2）', () => {
       status: string;
       request: { input: { text: string; truncated: boolean } };
     }>;
-    expect(inFlightCalls).toHaveLength(1);
-    expect(inFlightCalls[0]).toMatchObject({ stage: 'derive', status: 'running' });
-    expect(inFlightCalls[0]!.request.input.text).toContain('[REDACTED]');
-    expect(inFlightCalls[0]!.request.input.text).not.toContain(secret);
-    expect(inFlightCalls[0]!.request.input.truncated).toBe(true);
+    expect(inFlightCalls).toHaveLength(2);
+    expect(inFlightCalls[1]).toMatchObject({ stage: 'derive', status: 'running' });
+    expect(inFlightCalls[1]!.request.input.text).toContain('[REDACTED]');
+    expect(inFlightCalls[1]!.request.input.text).not.toContain(secret);
+    expect(inFlightCalls[1]!.request.input.truncated).toBe(true);
 
     releaseProvider();
     const final = await runner.waitForCompletion(run.id);
@@ -452,12 +470,12 @@ describe('M3 derive 工作流（§13.2）', () => {
       usage: Record<string, unknown>;
       response: { text: string };
     }>;
-    expect(completedCalls[0]).toMatchObject({
+    expect(completedCalls[1]).toMatchObject({
       status: 'succeeded',
       providerResponseId: 'trace-response-1',
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     });
-    expect(completedCalls[0]!.response.text).toContain('trace-child');
+    expect(completedCalls[1]!.response.text).toContain('trace-child');
   });
 
   it('单次生成 → 应用 → succeeded；上下文含目标节点', async () => {
@@ -481,8 +499,8 @@ describe('M3 derive 工作流（§13.2）', () => {
     const final = await runner.waitForCompletion(run.id);
 
     expect(final.status).toBe('succeeded');
-    expect(provider.calls).toHaveLength(1);
-    expect(provider.calls[0]!.input).toContain('父命题');
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[1]!.input).toContain('父命题');
     const nodes = ws.db.repos.node.listNodesByProject(ws.project.id);
     expect(nodes).toHaveLength(2);
   });
@@ -522,8 +540,8 @@ describe('M3 derive 工作流（§13.2）', () => {
     const resumed = await runner.waitForCompletion(run.id);
     expect(resumed.status).toBe('succeeded');
     expect(resumed.finishedAt).not.toBeNull();
-    expect(provider.calls).toHaveLength(2);
-    expect(provider.calls[1]!.input).toContain('继续，但只设计本地离线分支');
+    expect(provider.calls).toHaveLength(4);
+    expect(provider.calls[3]!.input).toContain('继续，但只设计本地离线分支');
     expect(ws.db.repos.node.listNodesByProject(ws.project.id).length).toBe(2);
   });
 
@@ -584,7 +602,7 @@ describe('M3 derive 工作流（§13.2）', () => {
     const failedAgain = await runner.waitForCompletion(run.id);
     expect(failedAgain.status).toBe('failed');
     // 未再次调用模型（checkpoint 已有 proposal）
-    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls).toHaveLength(2);
     expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(1);
   });
 
@@ -615,7 +633,7 @@ describe('M3 derive 工作流（§13.2）', () => {
     const after = ws.db.repos.workflowRun.getById(run.id);
     expect(after?.status).toBe('cancelled');
     expect(
-      (after?.checkpoint['modelCalls'] as Array<{ status: string; error: { code: string } }>)[0],
+      (after?.checkpoint['modelCalls'] as Array<{ status: string; error: { code: string } }>)[1],
     ).toMatchObject({ status: 'cancelled', error: { code: 'MODEL_PROVIDER_FAILED' } });
   });
 
@@ -666,7 +684,7 @@ describe('M3 derive 工作流（§13.2）', () => {
     runner.resume(freshProject(ws), interrupted.id);
     const final = await runner.waitForCompletion(interrupted.id);
     expect(final.status).toBe('succeeded');
-    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls).toHaveLength(2);
   });
 });
 

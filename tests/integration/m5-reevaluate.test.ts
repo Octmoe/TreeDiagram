@@ -251,8 +251,8 @@ describe('M5 reevaluate 工作流（§13.5）', () => {
 
     const final = await runner.waitForCompletion(run.id);
     expect(final.status).toBe('succeeded');
-    expect(provider.calls).toHaveLength(2);
-    expect(provider.calls[1]!.input).toContain('仍然完全离线');
+    expect(provider.calls).toHaveLength(4);
+    expect(provider.calls[3]!.input).toContain('仍然完全离线');
     const after = ws.db.repos.reviewItem.countsByChangeSet(changeSet.id);
     expect(after.pending).toBe(0);
     expect(after.blocked).toBe(0);

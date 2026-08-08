@@ -29,26 +29,40 @@ export class FakeModelProvider implements ModelProvider {
   readonly providerName = 'fake';
   readonly calls: FakeCall[] = [];
   private responder: FakeResponder;
+  private readonly autoReadiness: boolean;
 
-  constructor(responder: FakeResponder) {
+  constructor(responder: FakeResponder, options: { autoReadiness?: boolean } = {}) {
     this.responder = responder;
+    this.autoReadiness = options.autoReadiness ?? true;
   }
 
   /** 测试编排：依次返回 values；耗尽后抛 MODEL_PROVIDER_FAILED。 */
   static scripted(values: Array<unknown>): FakeModelProvider {
-    return new FakeModelProvider((_req, i) => {
-      if (i >= values.length) {
-        throw modelError('MODEL_PROVIDER_FAILED', 'fake script 已耗尽', { retryable: false });
-      }
-      const v = values[i];
-      if (v instanceof Error) throw v;
-      return v;
-    });
+    let cursor = 0;
+    return new FakeModelProvider(
+      (req) => {
+        const candidate = values[cursor];
+        // 旧测试/插件脚本只编排 DesignProposal。升级后为其自动插入确定性的 ready
+        // 评估，但如果脚本显式给出 WorkflowReadiness，则按脚本消费。
+        if (req.outputSchemaName === 'WorkflowReadiness' && !looksLikeReadiness(candidate)) {
+          return defaultFakeValue(req.outputSchemaName, req.input);
+        }
+        if (cursor >= values.length) {
+          throw modelError('MODEL_PROVIDER_FAILED', 'fake script 已耗尽', { retryable: false });
+        }
+        const v = values[cursor++];
+        if (v instanceof Error) throw v;
+        return v;
+      },
+      { autoReadiness: false },
+    );
   }
 
   /** 默认开发响应：按 outputSchemaName 生成最小合法结构。 */
   static forDevelopment(): FakeModelProvider {
-    return new FakeModelProvider((req) => defaultFakeValue(req.outputSchemaName, req.input));
+    return new FakeModelProvider((req) => defaultFakeValue(req.outputSchemaName, req.input), {
+      autoReadiness: false,
+    });
   }
 
   async generateStructured<T>(
@@ -68,7 +82,10 @@ export class FakeModelProvider implements ModelProvider {
       model: request.model,
       reasoningEffort: request.reasoningEffort,
     });
-    const value = await this.responder(request, callIndex);
+    const value =
+      this.autoReadiness && request.outputSchemaName === 'WorkflowReadiness'
+        ? defaultFakeValue(request.outputSchemaName, request.input)
+        : await this.responder(request, callIndex);
     const checker = TypeCompiler.Compile(request.outputSchema);
     if (!checker.Check(value)) {
       const first = [...checker.Errors(value)][0];
@@ -85,7 +102,61 @@ export class FakeModelProvider implements ModelProvider {
   }
 }
 
+function looksLikeReadiness(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['normalizedBrief'] === 'string' &&
+    typeof record['readiness'] === 'string' &&
+    Array.isArray(record['issues']) &&
+    Array.isArray(record['resolvedIssueIds'])
+  );
+}
+
 function defaultFakeValue(schemaName: string, input: string): unknown {
+  if (schemaName === 'WorkflowReadiness') {
+    const context = parseContext(input);
+    const workflowType =
+      context.task === 'derive' ||
+      context.task === 'grill' ||
+      context.task === 'unbox' ||
+      context.task === 'reevaluate'
+        ? context.task
+        : 'initialize';
+    const existing = readWorkflowIssues(context.data);
+    const answered = existing.filter((issue) => issue.status === 'answered');
+    const shouldClarify =
+      context.data['focusInstruction'] === '__fake_clarify__' && answered.length === 0;
+    return {
+      schemaVersion: 1,
+      workflowType,
+      summary: shouldClarify
+        ? 'FakeModelProvider 在提案前请求用户澄清。'
+        : 'FakeModelProvider 就绪评估通过。',
+      normalizedBrief: shouldClarify
+        ? '等待用户补充当前分支期望解决的问题。'
+        : '基于当前上下文和已持久化用户回答生成最小候选。',
+      readiness: shouldClarify ? 'needs_user' : 'ready',
+      issues: shouldClarify
+        ? [
+            {
+              issueId: existing.find((issue) => issue.issueKey === 'fake-focus')?.issueId ?? null,
+              issueKey: 'fake-focus',
+              kind: 'ambiguity',
+              gate: 'before_proposal',
+              question: '请确认这个分支期望解决的具体问题。',
+              rationale: '离线 fake 用于验证多轮澄清。',
+              answerType: 'free_text',
+              options: [],
+              relatedRefs: [],
+            },
+          ]
+        : [],
+      resolvedIssueIds: answered.map((issue) => issue.issueId),
+      assumptions: [],
+      warnings: ['当前使用 FakeModelProvider，就绪判断不具设计价值'],
+    };
+  }
   if (schemaName === 'DesignProposal') {
     const context = parseContext(input);
     const workflowType =
@@ -93,7 +164,9 @@ function defaultFakeValue(schemaName: string, input: string): unknown {
         ? context.task
         : 'initialize';
     const priorNodeRefs = readPriorNodeRefs(context.data);
-    const isInitializeRoot = workflowType === 'initialize' && priorNodeRefs.length > 0;
+    const isInitializeRoot =
+      workflowType === 'initialize' &&
+      (priorNodeRefs.length > 0 || context.data['workflowReadiness'] !== undefined);
     const shouldClarify =
       context.data['focusInstruction'] === '__fake_clarify__' &&
       !hasUserConversationMessage(context.data);
@@ -117,7 +190,7 @@ function defaultFakeValue(schemaName: string, input: string): unknown {
     }
     const nodeRef = isInitializeRoot ? 'root1' : 'n1';
     const relationActions: unknown[] = [];
-    if (isInitializeRoot) {
+    if (isInitializeRoot && priorNodeRefs.length > 0) {
       relationActions.push(
         fakeContainsAction(
           'r1',
@@ -251,6 +324,22 @@ function hasUserConversationMessage(data: Record<string, unknown>): boolean {
         (message as Record<string, unknown>)['role'] === 'user',
     )
   );
+}
+
+function readWorkflowIssues(
+  data: Record<string, unknown>,
+): Array<{ issueId: string; issueKey: string; status: string }> {
+  const issues = data['workflowIssues'];
+  if (!Array.isArray(issues)) return [];
+  return issues.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const issue = entry as Record<string, unknown>;
+    return typeof issue['issueId'] === 'string' &&
+      typeof issue['issueKey'] === 'string' &&
+      typeof issue['status'] === 'string'
+      ? [{ issueId: issue['issueId'], issueKey: issue['issueKey'], status: issue['status'] }]
+      : [];
+  });
 }
 
 function fakeContainsAction(ref: string, from: unknown, to: unknown): unknown {

@@ -354,7 +354,7 @@ describe('M1 工作区重开恢复', () => {
       runner.resume(project2, interrupted.id);
       const final = await runner.waitForCompletion(interrupted.id);
       expect(final.status).toBe('succeeded');
-      expect(provider.calls).toHaveLength(1);
+      expect(provider.calls).toHaveLength(2);
       // 恢复不依赖供应商会话：本地 checkpoint + 持久化候选共同驱动（关键不变量 12）
       const live = second.db.repos.changeSet.getLiveByProject(project2.id);
       expect(live?.status).toBe('open');
