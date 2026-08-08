@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { asId, type StartWorkflowRequest } from '@treediagram/contracts';
 import {
   CoreWorkflowRunner,
@@ -277,6 +278,74 @@ describe('M4 unbox 工作流（§13.4）', () => {
     // unbox 绝不自动 adopt：ChangeSet 仍 open，project 仍 consistent
     expect(ws.services.changeSets.getLive(freshProject(ws))?.status).toBe('open');
     expect(freshProject(ws).status).toBe('consistent');
+  });
+
+  it('需要澄清时不提前创建探索容器，回答后与最终提案原子写入', async () => {
+    const ws = makeTestWorkspace();
+    setConsistent(ws);
+    const root = quickNode(ws, { nodeType: 'goal', roles: ['root'], title: '根目标' });
+    quickNode(ws, { nodeType: 'constraint', title: '非根约束' }, root);
+    let call = 0;
+    const provider = new FakeModelProvider((req) => {
+      call += 1;
+      if (call === 1) {
+        return proposal([], [], {
+          workflowType: 'unbox',
+          summary: '需要确认可放宽的边界',
+          questionsForUser: [
+            { question: '允许放宽单机约束吗？', blocking: true, relatedProposalRefs: [] },
+          ],
+          stopReason: 'needs_user',
+        });
+      }
+      const context = JSON.parse(req.input) as { data: { container: { revisionId: string } } };
+      return proposal(
+        [nodeAction('alt1')],
+        [
+          containsAction(
+            'r1',
+            { refKind: 'existing_revision', ref: context.data.container.revisionId },
+            { refKind: 'proposal', ref: 'alt1' },
+          ),
+        ],
+        { workflowType: 'unbox' },
+      );
+    });
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), {
+      workflowType: 'unbox',
+      targetNodeId: null,
+      changeSetId: null,
+      sourceAssetIds: [],
+      focusInstruction: null,
+    });
+    const waiting = await runner.waitForCompletion(run.id);
+    expect(waiting.status).toBe('waiting_user');
+    expect(
+      ws.db.repos.node
+        .listNodesByProject(ws.project.id)
+        .some((node) =>
+          ws.db.repos.node.listRevisionsByNode(node.id)[0]?.roles.includes('unbox_exploration'),
+        ),
+    ).toBe(false);
+
+    const wait = ws.db.repos.workflowInteraction.getOpenWait(run.id)!;
+    runner.respond(freshProject(ws), run.id, {
+      waitId: wait.id,
+      clientMessageId: asId(randomUUID()),
+      message: '允许，但必须保留离线回退路径。',
+      answers: [],
+      sourceAssetIds: [],
+    });
+    const final = await runner.waitForCompletion(run.id);
+    expect(final.status).toBe('succeeded');
+    expect(provider.calls[1]!.input).toContain('保留离线回退路径');
+    const container = ws.db.repos.node
+      .listNodesByProject(ws.project.id)
+      .find((node) =>
+        ws.db.repos.node.listRevisionsByNode(node.id)[0]?.roles.includes('unbox_exploration'),
+      );
+    expect(container).toBeDefined();
   });
 
   it('unbox 在 initializing 状态不可用', () => {

@@ -140,6 +140,8 @@ const TRACE_MAX_INPUT = 12_000;
 const TRACE_MAX_RESPONSE = 16_000;
 const TRACE_MAX_CALLS = 50;
 const MODEL_MAX_OUTPUT_TOKENS = 16_384;
+const UNBOX_CONTAINER_NODE_REF = '__unbox_container_node__';
+const UNBOX_CONTAINER_REVISION_REF = '__unbox_container_revision__';
 
 function redactSecrets(text: string): string {
   return text
@@ -727,34 +729,24 @@ export class CoreWorkflowRunner {
         });
         context = buildInitializeContext(sources);
       } else if (run.workflowType === 'unbox') {
-        // §13.4：先确定性地创建 unbox_exploration 容器候选（幂等），再构建边界探索上下文。
-        if (!checkpoint.containerRevisionId) {
-          const container = this.nodes.createCandidateNode(
-            project,
-            'topic',
-            {
-              displayTitle: `Unbox 探索 ${startedAt}`,
-              contentText: '由 Unbox 工作流创建的默认容器，承载跳出当前约束的平行候选。',
-              roles: ['unbox_exploration'],
-              attributes: {},
-              approvalState: 'draft',
-              epistemicState: null,
-            },
-            author,
-          );
-          checkpoint.containerRevisionId = container.revision.id;
-        }
-        const containerRevision = this.db.repos.node.getRevisionById(
-          checkpoint.containerRevisionId,
-        );
-        if (!containerRevision) {
+        // 澄清回合必须零领域副作用：首次生成使用虚拟容器引用，只有 complete 后才在
+        // apply_proposal 同一事务内创建真实容器并替换端点。旧 checkpoint 则复用真实容器。
+        const containerRevision = checkpoint.containerRevisionId
+          ? this.db.repos.node.getRevisionById(checkpoint.containerRevisionId)
+          : null;
+        if (checkpoint.containerRevisionId && !containerRevision) {
           throw new DomainError('CORRUPT_PERSISTED_DATA', 'unbox 容器修订缺失', {
             revisionId: checkpoint.containerRevisionId,
           });
         }
         context = buildUnboxContext(
           this.currentWorkingSet(project),
-          { nodeId: containerRevision.nodeId, revisionId: containerRevision.id },
+          containerRevision
+            ? { nodeId: containerRevision.nodeId, revisionId: containerRevision.id }
+            : {
+                nodeId: UNBOX_CONTAINER_NODE_REF,
+                revisionId: UNBOX_CONTAINER_REVISION_REF,
+              },
           (run.input['focusInstruction'] as string | null) ?? null,
         );
       } else {
@@ -910,9 +902,39 @@ export class CoreWorkflowRunner {
       const effectivePolicy = this.resolveEffectivePolicy(run);
       if (!checkpoint.applied) {
         sanitizeProposal(run.workflowType, checkpoint.proposal);
-        const result = this.db.transaction(() =>
-          this.applier.apply(project, run, checkpoint.proposal, { effectivePolicy }, agentAuthor),
-        );
+        let proposalToApply = checkpoint.proposal;
+        let createdContainerRevisionId: string | null = null;
+        const result = this.db.transaction(() => {
+          if (run.workflowType === 'unbox' && !checkpoint.containerRevisionId) {
+            const container = this.nodes.createCandidateNode(
+              project,
+              'topic',
+              {
+                displayTitle: `Unbox 探索 ${startedAt}`,
+                contentText: '由 Unbox 工作流创建的默认容器，承载跳出当前约束的平行候选。',
+                roles: ['unbox_exploration'],
+                attributes: {},
+                approvalState: 'draft',
+                epistemicState: null,
+              },
+              author,
+            );
+            createdContainerRevisionId = container.revision.id;
+            proposalToApply = structuredClone(checkpoint.proposal);
+            replaceUnboxContainerRefs(proposalToApply, container.revision.id);
+          }
+          return this.applier.apply(
+            project,
+            run,
+            proposalToApply,
+            { effectivePolicy },
+            agentAuthor,
+          );
+        });
+        if (createdContainerRevisionId) {
+          checkpoint.containerRevisionId = createdContainerRevisionId;
+          checkpoint.proposal = proposalToApply;
+        }
         checkpoint.applied = {
           nodeRevisionIds: result.appliedNodeRevisionIds,
           relationRevisionIds: result.appliedRelationRevisionIds,
@@ -1566,6 +1588,25 @@ function summarizeProposalRefs(proposal: unknown): unknown {
       displayTitle: a.displayTitle,
     })),
   };
+}
+
+/** Unbox complete 后把模型上下文中的虚拟容器 revision 引用换成事务内创建的真实修订。 */
+function replaceUnboxContainerRefs(proposal: unknown, containerRevisionId: string): void {
+  const actions = (proposal as { relationActions?: unknown[] }).relationActions ?? [];
+  for (const rawAction of actions) {
+    const action = rawAction as {
+      from?: { refKind?: string; ref?: string };
+      to?: { refKind?: string; ref?: string };
+    };
+    for (const endpoint of [action.from, action.to]) {
+      if (
+        endpoint?.refKind === 'existing_revision' &&
+        endpoint.ref === UNBOX_CONTAINER_REVISION_REF
+      ) {
+        endpoint.ref = containerRevisionId;
+      }
+    }
+  }
 }
 
 /**
