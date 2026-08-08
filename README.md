@@ -110,6 +110,16 @@ Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
 状态的 WorkflowRun 在启动时被标记 `failed(PROCESS_INTERRUPTED)`，可通过
 `POST /api/v1/workflows/:id/resume` 从本地 checkpoint 幂等续跑（不依赖供应商会话）。
 
+当模型判断输入存在关键歧义时，当前阶段不会应用任何提案，而是把 Agent 消息与稳定问题 ID
+持久化并进入 `waiting_user`。Workflow 面板会自动展开任务对话；用户回答后，服务端以原始上下文、
+本地持久化对话和附件重新运行同一阶段。HTTP 客户端可使用：
+
+- `GET /api/v1/workflows/:id/messages` 读取对话与当前开放等待；
+- `POST /api/v1/workflows/:id/respond` 提交幂等回答并继续；
+- `POST /api/v1/workflows/:id/retry` 仅重试 `failed` 运行。
+
+聊天回答不会隐式确认 root、发布 Release 或修改托管策略；这些仍是显式用户操作。
+
 Workflow 面板可展开“模型记录”：请求发出前即写入当前阶段（Initialize 会区分“提取候选”与
 “生成根节点”）、开始时间、模型与推理档位，完成后补充最终结构化响应、responseId 和 token
 用量。记录只对 admin 开放，密钥字段会脱敏，源码/上下文/响应会截断，不包含模型内部思维链。

@@ -217,19 +217,27 @@ schema 名称均指 `packages/contracts/src/schemas/` 中的导出。响应均�
 
 ### 6.7 Workflow
 
-| Method | Path                    | Scope | Body/Query                   | Response                             | 备注                                                      |
-| ------ | ----------------------- | ----- | ---------------------------- | ------------------------------------ | --------------------------------------------------------- |
-| POST   | `/workflows`            | admin | `StartWorkflowRequestSchema` | `WorkflowRunSchema` (202)            | 已有 running/paused run 时 409 `WORKFLOW_ALREADY_RUNNING` |
-| GET    | `/workflows/:id`        | admin | —                            | `WorkflowRunSchema`                  |                                                           |
-| POST   | `/workflows/:id/resume` | admin | —                            | `WorkflowRunSchema` (202)            | 非 paused/failed 时 409 `WORKFLOW_NOT_RESUMABLE`          |
-| POST   | `/workflows/:id/cancel` | admin | —                            | `WorkflowRunSchema` (200)            |                                                           |
-| GET    | `/workflows`            | admin | `WorkflowListQuerySchema`    | `WorkflowRunSchema[]` + `nextCursor` | cursor 分页                                               |
+| Method | Path                      | Scope | Body/Query                     | Response                             | 备注                                                      |
+| ------ | ------------------------- | ----- | ------------------------------ | ------------------------------------ | --------------------------------------------------------- |
+| POST   | `/workflows`              | admin | `StartWorkflowRequestSchema`   | `WorkflowRunSchema` (202)            | 已有 running/paused run 时 409 `WORKFLOW_ALREADY_RUNNING` |
+| GET    | `/workflows/:id`          | admin | —                              | `WorkflowRunSchema`                  |                                                           |
+| POST   | `/workflows/:id/resume`   | admin | —                              | `WorkflowRunSchema` (202)            | 兼容故障恢复/外部 blocker；有开放对话时拒绝               |
+| POST   | `/workflows/:id/retry`    | admin | —                              | `WorkflowRunSchema` (202)            | 仅 failed；从本地 checkpoint 重试                         |
+| GET    | `/workflows/:id/messages` | admin | —                              | `WorkflowConversationSchema`         | 不向 consumer 暴露对话                                    |
+| POST   | `/workflows/:id/respond`  | admin | `RespondWorkflowRequestSchema` | `WorkflowRunSchema` (202)            | waitId 防过期；clientMessageId 保证幂等                   |
+| POST   | `/workflows/:id/cancel`   | admin | —                              | `WorkflowRunSchema` (200)            |                                                           |
+| GET    | `/workflows`              | admin | `WorkflowListQuerySchema`      | `WorkflowRunSchema[]` + `nextCursor` | cursor 分页                                               |
 
 `WorkflowRun.checkpoint.modelCalls` 是管理员诊断轨迹：provider 请求发出前即追加 running
 记录，完成/失败/取消时原位补齐终态、最终结构化响应、responseId 与 usage。请求和响应只保存
 脱敏、限长预览；密钥字段不回显，长 `contentText` 单字段截断，且不包含 provider 内部 reasoning。
 它是工作区本地 checkpoint 数据，不写入 Pino 请求日志，也不向 consumer 开放。
 单个 WorkflowRun 最多保留最近 50 条模型调用轨迹。
+
+模型需要用户澄清时必须在应用当前回合提案前进入 `waiting_user`。Agent 问题、用户回答与附件引用
+分别持久化在 `workflow_message`；`workflow_wait` 保证每个 run 最多一个开放等待。回答成功时，消息写入、
+wait 关闭与 run 转为 queued 在同一事务完成。服务端重新装配原始任务上下文和完整本地对话，不使用
+provider 会话续接。聊天内容仅 admin 可读，且不会直接授予 user_confirmed、Publish 或 policy 权限。
 
 ### 6.8 下游 Release 与事件
 

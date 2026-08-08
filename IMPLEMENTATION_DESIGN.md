@@ -131,7 +131,8 @@ TreeDiagram/
 │     ├─ package.json
 │     ├─ tsconfig.json
 │     ├─ migrations/
-│     │  └─ 0001_initial.sql
+│     │  ├─ 0001_initial.sql
+│     │  └─ 0002_workflow_conversation.sql
 │     └─ src/
 │        ├─ index.ts
 │        ├─ errors.ts
@@ -388,7 +389,7 @@ ChangeSet：`open -> reevaluating -> ready -> published`；`open|reevaluating|re
 
 ReviewItem：`pending -> resolved|blocked`；`blocked -> pending` 只由显式 Resume/解除阻塞命令执行；`blocked -> resolved` 需要用户或授权 AI 给出 verdict+rationale。resolved 不原地回退；后续变化创建新的 review item。
 
-WorkflowRun：`queued -> running -> succeeded|failed|waiting_user|cancelled`；`waiting_user -> running|cancelled`。进程重启时遗留的 queued/running 都原子改为 waiting_user，原因 `PROCESS_INTERRUPTED`；这覆盖“POST 已提交但 queueMicrotask 尚未执行”的窗口。终态不可恢复。
+WorkflowRun：`queued -> running -> succeeded|failed|waiting_user|cancelled`；用户回答使 `waiting_user -> queued -> running`，外部 review blocker 解除后兼容 resume 也可继续。进程重启时遗留的 queued/running 标记为 `failed(PROCESS_INTERRUPTED)`；`waiting_user` 与其完整本地对话保持不变。终态不可恢复。
 
 Approval/Epistemic 看似“状态变化”，实际永远通过新 revision 表达，不 UPDATE 旧 revision。用户可以创建任意合法治理状态但不能伪造 ai_confirmed；Agent 只能创建 draft/tentative，或在有效托管范围内创建 ai_confirmed，永远不能创建 user_confirmed。
 
@@ -642,6 +643,12 @@ CREATE TABLE event_outbox (
 );
 CREATE INDEX event_outbox_project_cursor_idx ON event_outbox(project_id, cursor);
 ```
+
+`0002_workflow_conversation.sql` 增加不可变 `workflow_message` 与 `workflow_wait`：message 按
+`(workflow_run_id, sequence)` 严格排序，并以 `(workflow_run_id, client_message_id)` 部分唯一索引
+保证用户提交幂等；wait 通过部分唯一索引保证每个 run 最多一条 `status=open`。Agent 问题、用户
+结构化答案和 source 附件 ID 使用受 Schema 校验的 JSON 列，开放 wait 的 message/answer 都使用
+外键关联，取消或回答只改变 wait 状态，不改写历史消息。
 
 `authorization_json` 在 approval_state=ai_confirmed 时必须由领域层校验为 `{ workflowRunId, policyId }`，其他状态必须为 null。数据库 CHECK 阻止所有关系自环；端点类型矩阵和其他跨表规则由 RelationService 校验。
 
@@ -994,6 +1001,9 @@ publish endpoint 只在 checker 通过且 status=ready 时成功；UI 不得通�
 - `POST /api/v1/workflows`
 - `GET /api/v1/workflows/:id`
 - `POST /api/v1/workflows/:id/resume`
+- `POST /api/v1/workflows/:id/retry`（仅 failed）
+- `GET /api/v1/workflows/:id/messages`
+- `POST /api/v1/workflows/:id/respond`
 - `POST /api/v1/workflows/:id/cancel`
 - `GET /api/v1/workflows?limit=&cursor=`
 
@@ -1158,7 +1168,13 @@ queued
   -> waiting_user | succeeded | failed
 ```
 
-每步完成后事务更新 checkpoint_json。checkpoint 至少保存：已完成步骤、输入上下文 hash、生成的 proposal、已经落库的 entity IDs。resume 必须幂等：若 proposal 已应用，不得重复创建节点。
+每步完成后事务更新 checkpoint_json。checkpoint 至少保存：已完成步骤、输入上下文 hash、生成的 proposal、已经落库的 entity IDs。retry/resume 必须幂等：若 proposal 已应用，不得重复创建节点。
+
+运行时澄清与设计树中的 Question 是两类对象：前者保存在 `workflow_message/workflow_wait`，只控制
+当前 Workflow 阶段；后者是需要长期追踪、参与一致性检查的领域节点。模型输出 questionsForUser 或
+非 completed stopReason 时，当前回合 node/relation actions 不得应用；Runner 持久化 Agent 消息后
+进入 waiting_user。用户以 waitId + clientMessageId 回答，回答事务提交后重新运行同一阶段，模型输入
+在 JSON data.workflowConversation 中携带完整本地对话。整个机制不依赖 provider 会话。
 
 ### 13.1 Initialize
 
@@ -1241,7 +1257,7 @@ Tab：Overview、Relations、Evidence、History、Delegation。
 
 ### 14.5 Workflow Panel
 
-允许选择 workflow 和 target；显示当前步骤、结构化 summary、questionsForUser、warnings、提案数量。模型长时间等待时保持取消按钮，并允许管理员展开本地持久化的模型调用轨迹：阶段、已等待时间、脱敏/截断后的请求预览、最终结构化响应、responseId 与 token usage。Initialize 的 extract/root 两次调用分别展示。内部 reasoning 不展示。取消只停止后续步骤，不回滚已成功写入 ChangeSet 的提案。
+允许选择 workflow 和 target；显示当前步骤、结构化 summary、warnings、提案数量。waiting_user 时自动展开持久化任务对话，显示 Agent 消息、稳定问题 ID 对应的问题与用户历史回答，并提供自由文本回答入口；提交后显示用户消息并跟随同一 run 继续轮询。failed 提供独立“重试失败阶段”。模型长时间等待时保持取消按钮，并允许管理员展开本地持久化的模型调用轨迹：阶段、已等待时间、脱敏/截断后的请求预览、最终结构化响应、responseId 与 token usage。Initialize 的 extract/root 两次调用分别展示。内部 reasoning 不展示。取消只停止后续步骤，不回滚已成功写入 ChangeSet 的提案。
 
 ## 15. 配置、日志与错误
 

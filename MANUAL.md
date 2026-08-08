@@ -119,7 +119,7 @@ npm ci && npm start
 | **用途**       | adopt 之后，逐项复核受影响内容：仍有效（valid）、需修订（revise）、已证伪（refute）、被替代（supersede）；关系端点失效时**显式迁移**到新修订（绝不静默迁移） |
 | **可用条件**   | live ChangeSet = `reevaluating`（或 project = `blocked`）；通常紧随 adopt                                                                                    |
 | **产出**       | 分批裁决 + 迁移/替代修订；全部解决且一致性检查通过 → ChangeSet 自动 `ready`                                                                                  |
-| **之后做什么** | 若有 `unknown` 裁决 → 复核项转 blocked，运行进入 `waiting_user`，人工裁决后 resume；ready 后 Publish                                                         |
+| **之后做什么** | 若模型需要更多信息，运行进入 `waiting_user`，直接在 Workflow 对话中回答；若复核项已转 blocked，则人工裁决后 resume；ready 后 Publish                         |
 
 ## 6. 发布生命周期（最重要的一条主线）
 
@@ -187,18 +187,19 @@ GET /api/v1/query?view=release&type=decision
 
 ## 10. 异常与恢复
 
-| 情况              | 现象                                                    | 处理                                            |
-| ----------------- | ------------------------------------------------------- | ----------------------------------------------- |
-| 模型问你问题      | run = `waiting_user`（summary 含 questionsForUser）     | 回答问题相关事项后 `POST /workflows/:id/resume` |
-| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                      |
-| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                           |
-| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | resume 会复用 checkpoint 重试或重新生成         |
-| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | resume 从本地 checkpoint 幂等续跑               |
-| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）    |
-| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake` |
-| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正    |
+| 情况              | 现象                                                    | 处理                                                               |
+| ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| 模型问你问题      | run = `waiting_user`，Workflow 面板自动展开对话         | 在对话框回答；UI 调用 `POST /workflows/:id/respond` 后重跑同一阶段 |
+| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                                         |
+| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                                              |
+| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | “重试失败阶段”或 `POST /workflows/:id/retry`                       |
+| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | retry 从本地 checkpoint 幂等续跑                                   |
+| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）                       |
+| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake`                    |
+| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正                       |
 
-> 提示：resume 目前走 API（`POST /api/v1/workflows/:id/resume`）；UI 面板展示状态与摘要。
+> 澄清对话与故障重试已经分离：`respond` 必须携带当前 `waitId` 与幂等 `clientMessageId`；
+> `retry` 只接受 failed。旧 `resume` 保留给外部人工解除的 review blocker 与兼容调用，存在开放问题时会拒绝。
 
 ### 错误窗口
 
