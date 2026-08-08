@@ -40,7 +40,7 @@ function formatSize(bytes: number): string {
 }
 
 export function WorkflowPanel() {
-  const { state, api, dispatch, refresh } = useApp();
+  const { state, api, dispatch, refresh, reportError } = useApp();
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [workflowType, setWorkflowType] = useState<WorkflowType>('initialize');
   const [focusInstruction, setFocusInstruction] = useState('');
@@ -96,9 +96,12 @@ export function WorkflowPanel() {
       refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'MODEL_NOT_CONFIGURED') {
-        setError('Agent 工作流尚未配置模型提供方。当前可继续使用手动编辑。');
+        reportError(
+          new Error('Agent 工作流尚未配置模型提供方。当前可继续使用手动编辑。'),
+          '无法启动工作流',
+        );
       } else {
-        setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+        reportError(err, '无法启动工作流');
       }
     } finally {
       setBusy(false);
@@ -147,8 +150,24 @@ export function WorkflowPanel() {
       await load();
       refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '无法取消工作流');
     }
+  };
+
+  /** 失败 run 的 error 详情弹窗（run.error 为服务端序列化的 DomainError）。 */
+  const showRunError = (run: WorkflowRun) => {
+    const raw = (run.error ?? {}) as Record<string, unknown>;
+    dispatch({
+      type: 'error-show',
+      report: {
+        title: `工作流失败：${run.workflowType}`,
+        code: typeof raw['code'] === 'string' ? raw['code'] : 'UNKNOWN',
+        message: typeof raw['message'] === 'string' ? raw['message'] : JSON.stringify(run.error),
+        ...(raw['details'] && typeof raw['details'] === 'object'
+          ? { details: raw['details'] as Record<string, unknown> }
+          : {}),
+      },
+    });
   };
 
   const isActive = (run: WorkflowRun) => ['queued', 'running', 'waiting_user'].includes(run.status);
@@ -229,7 +248,11 @@ export function WorkflowPanel() {
             {run.summary ? (
               <pre className="run-summary">{JSON.stringify(run.summary, null, 2)}</pre>
             ) : null}
-            {run.error ? <p className="error">{JSON.stringify(run.error)}</p> : null}
+            {run.error ? (
+              <button className="danger" onClick={() => showRunError(run)}>
+                查看错误详情
+              </button>
+            ) : null}
             {isActive(run) ? (
               <button className="danger" onClick={() => void cancel(run.id)}>
                 取消（不回滚已写入提案）

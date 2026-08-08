@@ -405,3 +405,87 @@ button.danger {
 .warning-list {
   color: var(--warning);
 }
+
+/* 独立错误窗口（ErrorDialog） */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.error-dialog {
+  width: min(640px, 92vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.error-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.error-dialog > header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--error);
+}
+
+.error-dialog-body {
+  padding: 12px 14px;
+  overflow: auto;
+}
+
+.error-dialog-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-weight: 600;
+}
+
+.error-dialog-body h3 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.error-dialog-details {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.error-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.badge.dialog-code {
+  background: var(--error);
+  color: #fff;
+  margin-right: 6px;
+}
+
+.muted {
+  opacity: 0.6;
+  font-size: 12px;
+}

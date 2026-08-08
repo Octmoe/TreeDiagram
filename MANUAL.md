@@ -187,17 +187,24 @@ GET /api/v1/query?view=release&type=decision
 
 ## 10. 异常与恢复
 
-| 情况            | 现象                                                    | 处理                                            |
-| --------------- | ------------------------------------------------------- | ----------------------------------------------- |
-| 模型问你问题    | run = `waiting_user`（summary 含 questionsForUser）     | 回答问题相关事项后 `POST /workflows/:id/resume` |
-| 复核项 unknown  | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                      |
-| 自动 Adopt 越界 | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                           |
-| 模型输出不合法  | run = `failed`（MODEL_OUTPUT_INVALID）                  | resume 会复用 checkpoint 重试或重新生成         |
-| 服务进程重启    | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | resume 从本地 checkpoint 幂等续跑               |
-| 不想继续        | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）    |
-| 未配置模型      | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake` |
+| 情况              | 现象                                                    | 处理                                            |
+| ----------------- | ------------------------------------------------------- | ----------------------------------------------- |
+| 模型问你问题      | run = `waiting_user`（summary 含 questionsForUser）     | 回答问题相关事项后 `POST /workflows/:id/resume` |
+| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                      |
+| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                           |
+| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | resume 会复用 checkpoint 重试或重新生成         |
+| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | resume 从本地 checkpoint 幂等续跑               |
+| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）    |
+| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake` |
+| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正    |
 
 > 提示：resume 目前走 API（`POST /api/v1/workflows/:id/resume`）；UI 面板展示状态与摘要。
+
+### 错误窗口
+
+用户操作（启动/取消工作流、保存修订、建关系、ChangeSet 动作等）失败时会弹出**独立错误窗口**，展示错误码、HTTP 状态、消息与服务端返回的 details 原始 JSON，可一键「复制全部」用于反馈排查；Esc 或点击遮罩关闭。失败的历史 WorkflowRun 也可在 Workflow 面板点「查看错误详情」重新打开。
+
+模型类错误（`MODEL_PROVIDER_FAILED`）的 message 会附带 provider 返回的原始原因（截断到 500 字符），常见如 `Model Not Exist`（模型名填错）、`context length exceeded`（输入超长）、网关不支持某参数等。
 
 ## 11. 常见问题
 

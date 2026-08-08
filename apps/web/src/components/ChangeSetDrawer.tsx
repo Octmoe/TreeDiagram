@@ -27,7 +27,7 @@ interface ChangeSetView {
 }
 
 export function ChangeSetDrawer() {
-  const { state, api, dispatch, refresh } = useApp();
+  const { state, api, dispatch, refresh, reportError } = useApp();
   const [view, setView] = useState<ChangeSetView | null>(null);
   const [review, setReview] = useState<ReviewItemsResponse | null>(null);
   const [check, setCheck] = useState<CheckConsistencyResponse | null>(null);
@@ -65,7 +65,7 @@ export function ChangeSetDrawer() {
       await load();
       refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, 'ChangeSet 操作失败');
     } finally {
       setBusy(false);
     }

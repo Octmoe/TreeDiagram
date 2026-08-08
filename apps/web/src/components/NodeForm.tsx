@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
 import type { NodeDetail, NodeType, RelationDetail } from '@treediagram/contracts';
-import { ApiError } from '../api/client';
 import { useApp } from '../state/app';
 
 /**
@@ -41,7 +40,7 @@ const EPISTEMIC_TYPES = new Set<NodeType>(['claim', 'constraint', 'risk']);
 const ROOT_TYPES = new Set<NodeType>(['claim', 'goal', 'constraint']);
 
 export function NodeForm({ onCreated }: { onCreated: (nodeId: string) => void }) {
-  const { api, state } = useApp();
+  const { api, state, reportError } = useApp();
   const [nodeType, setNodeType] = useState<NodeType>('topic');
   const [title, setTitle] = useState('');
   const [contentText, setContentText] = useState('');
@@ -90,7 +89,7 @@ export function NodeForm({ onCreated }: { onCreated: (nodeId: string) => void })
       }
       onCreated(detail.node.id);
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '创建节点失败');
     } finally {
       setBusy(false);
     }

@@ -89,7 +89,7 @@ export function Inspector() {
 // ---- Overview ----
 
 function OverviewTab({ detail, onSaved }: { detail: NodeDetail; onSaved: () => void }) {
-  const { api, refresh } = useApp();
+  const { api, refresh, reportError } = useApp();
   const [title, setTitle] = useState(detail.revision.displayTitle);
   const [contentText, setContentText] = useState(detail.revision.contentText);
   const [attributesText, setAttributesText] = useState(
@@ -142,7 +142,7 @@ function OverviewTab({ detail, onSaved }: { detail: NodeDetail; onSaved: () => v
       refresh();
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '保存修订失败');
     } finally {
       setBusy(false);
     }
@@ -156,7 +156,7 @@ function OverviewTab({ detail, onSaved }: { detail: NodeDetail; onSaved: () => v
       await api.post(`/nodes/${detail.node.id}/archive`);
       refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '归档节点失败');
     }
   };
 
@@ -279,7 +279,7 @@ function RelationsTab({ nodeId }: { nodeId: string }) {
 }
 
 function NewRelationForm({ nodeId, onCreated }: { nodeId: string; onCreated: () => void }) {
-  const { api } = useApp();
+  const { api, reportError } = useApp();
   const [open, setOpen] = useState(false);
   const [relationType, setRelationType] = useState('supports');
   const [selfRevisionId, setSelfRevisionId] = useState<string | null>(null);
@@ -326,7 +326,7 @@ function NewRelationForm({ nodeId, onCreated }: { nodeId: string; onCreated: () 
       setOpen(false);
       onCreated();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '创建关系失败');
     }
   };
 
@@ -531,7 +531,7 @@ function HistoryTab({ nodeId }: { nodeId: string }) {
 // ---- Delegation ----
 
 function DelegationTab({ nodeId, onChanged }: { nodeId: string; onChanged: () => void }) {
-  const { api } = useApp();
+  const { api, reportError } = useApp();
   const [resolution, setResolution] = useState<DelegationResolution | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -556,7 +556,7 @@ function DelegationTab({ nodeId, onChanged }: { nodeId: string; onChanged: () =>
       await load();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '设置托管模式失败');
     }
   };
 
@@ -567,7 +567,7 @@ function DelegationTab({ nodeId, onChanged }: { nodeId: string; onChanged: () =>
       await load();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.code}: ${err.message}` : String(err));
+      reportError(err, '撤销托管设置失败');
     }
   };
 

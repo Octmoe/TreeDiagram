@@ -18,11 +18,44 @@ import {
 
 const MAX_RETRIES = 2;
 const RETRY_DELAYS_MS = [1000, 4000];
+/** 带入 DomainError 的服务端原始原因上限，避免整段报文撑爆错误响应。 */
+const PROVIDER_MESSAGE_MAX = 500;
 
 interface OpenAIUsageShape {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+}
+
+interface ProviderErrorShape {
+  status?: number;
+  code?: string;
+  message?: string;
+  name?: string;
+  /** OpenAI SDK APIError 上解析后的服务端错误体（{ message, type, code } 或字符串）。 */
+  error?: unknown;
+}
+
+/**
+ * 从 SDK/网关错误中提取服务端返回的原始原因：
+ * 优先取 SDK 解析后的 error.message（干净），回退到 Error.message（SDK 会拼入整个响应体），
+ * 统一截断到 PROVIDER_MESSAGE_MAX。鉴权类错误不调用本函数，避免回显敏感信息。
+ */
+export function extractProviderMessage(e: ProviderErrorShape): string | null {
+  const body = e.error;
+  let candidate: string | null = null;
+  if (typeof body === 'string') {
+    candidate = body;
+  } else if (body && typeof body === 'object') {
+    const m = (body as { message?: unknown }).message;
+    if (typeof m === 'string') candidate = m;
+  }
+  candidate ??= typeof e.message === 'string' ? e.message : null;
+  const trimmed = candidate?.trim() ?? '';
+  if (!trimmed) return null;
+  return trimmed.length > PROVIDER_MESSAGE_MAX
+    ? `${trimmed.slice(0, PROVIDER_MESSAGE_MAX)}…`
+    : trimmed;
 }
 
 function toUsage(raw: unknown): ModelUsage {
@@ -36,32 +69,45 @@ function toUsage(raw: unknown): ModelUsage {
   };
 }
 
-function classifyProviderError(error: unknown): DomainError {
+/**
+ * 把 SDK/网络错误映射为领域错误。4xx/5xx 时把服务端返回的原始原因
+ * （截断后）拼入 message 并放进 details.providerMessage，便于定位网关拒绝原因；
+ * 401/403 不回显服务端报文，避免泄露鉴权相关信息。
+ */
+export function classifyProviderError(error: unknown): DomainError {
   if (error instanceof DomainError) return error;
-  const e = error as { status?: number; code?: string; message?: string; name?: string };
-  const status = typeof e?.status === 'number' ? e.status : null;
-  const message = typeof e?.message === 'string' ? e.message : String(error);
+  const e = (error ?? {}) as ProviderErrorShape;
+  const status = typeof e.status === 'number' ? e.status : null;
+  const providerMessage = extractProviderMessage(e);
+  const suffix = providerMessage ? `: ${providerMessage}` : '';
+  const extra = providerMessage ? { providerMessage } : {};
 
-  if (status === 400 && /refus|content[_ ]?filter|safety/i.test(message)) {
-    return modelError('MODEL_REFUSED', '模型拒绝生成', { status });
+  if (status === 400 && /refus|content[_ ]?filter|safety/i.test(providerMessage ?? '')) {
+    return modelError('MODEL_REFUSED', `模型拒绝生成${suffix}`, { status, ...extra });
   }
   if (status === 401 || status === 403) {
     return modelError('MODEL_NOT_CONFIGURED', 'API key 无效或缺少权限', { status });
   }
   if (status === 429 || (status !== null && status >= 500)) {
-    return modelError('MODEL_PROVIDER_FAILED', `provider 错误（HTTP ${status}）`, {
+    return modelError('MODEL_PROVIDER_FAILED', `provider 错误（HTTP ${status}）${suffix}`, {
       status,
       retryable: true,
+      ...extra,
     });
   }
   if (status !== null && status >= 400 && status < 500) {
-    return modelError('MODEL_PROVIDER_FAILED', `provider 客户端错误（HTTP ${status}）`, {
+    return modelError('MODEL_PROVIDER_FAILED', `provider 客户端错误（HTTP ${status}）${suffix}`, {
       status,
       retryable: false,
+      ...extra,
     });
   }
   // 网络/timeout/abort 之外的其他错误视为可重试 provider 故障
-  return modelError('MODEL_PROVIDER_FAILED', `provider 调用失败: ${message}`, { retryable: true });
+  const fallback = providerMessage ?? String(error);
+  return modelError('MODEL_PROVIDER_FAILED', `provider 调用失败: ${fallback}`, {
+    retryable: true,
+    ...extra,
+  });
 }
 
 export class OpenAIProvider implements ModelProvider {

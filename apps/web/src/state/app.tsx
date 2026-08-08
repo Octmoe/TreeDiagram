@@ -15,6 +15,16 @@ import { ApiError, createApiClient, loadToken, saveToken, type ApiClient } from 
  * mutation 完成后通过 refresh() 重新读取受影响 slice，不做 optimistic update。
  */
 
+/** 错误窗口（ErrorDialog）展示用的结构化错误报告。 */
+export interface ErrorReport {
+  title: string;
+  code: string;
+  message: string;
+  status?: number;
+  requestId?: string;
+  details?: Record<string, unknown>;
+}
+
 export interface AppState {
   token: string | null;
   tokenChecked: boolean;
@@ -26,6 +36,8 @@ export interface AppState {
   refreshCounter: number;
   /** 当前是否存在活跃 WorkflowRun（驱动 1s 轮询）。 */
   activeWorkflow: boolean;
+  /** 非空时弹出独立错误窗口。 */
+  errorReport: ErrorReport | null;
 }
 
 export type AppAction =
@@ -36,7 +48,9 @@ export type AppAction =
   | { type: 'select-node'; nodeId: string | null }
   | { type: 'drawer'; open: boolean }
   | { type: 'refresh' }
-  | { type: 'workflow-active'; active: boolean };
+  | { type: 'workflow-active'; active: boolean }
+  | { type: 'error-show'; report: ErrorReport }
+  | { type: 'error-dismiss' };
 
 const initialState: AppState = {
   token: loadToken(),
@@ -47,6 +61,7 @@ const initialState: AppState = {
   drawerOpen: false,
   refreshCounter: 0,
   activeWorkflow: false,
+  errorReport: null,
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -67,6 +82,10 @@ function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, refreshCounter: state.refreshCounter + 1 };
     case 'workflow-active':
       return { ...state, activeWorkflow: action.active };
+    case 'error-show':
+      return { ...state, errorReport: action.report };
+    case 'error-dismiss':
+      return { ...state, errorReport: null };
   }
 }
 
@@ -76,6 +95,8 @@ interface AppContextValue {
   dispatch: (action: AppAction) => void;
   refresh: () => void;
   login: (token: string) => void;
+  /** 把任意错误转成 ErrorReport 并弹出独立错误窗口（用户操作失败时使用）。 */
+  reportError: (err: unknown, title?: string) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -87,6 +108,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const login = useCallback((token: string) => {
     saveToken(token);
     baseDispatch({ type: 'token-set', token });
+  }, []);
+  const reportError = useCallback((err: unknown, title = '操作失败') => {
+    if (err instanceof ApiError) {
+      baseDispatch({
+        type: 'error-show',
+        report: {
+          title,
+          code: err.code,
+          message: err.message,
+          status: err.status,
+          ...(err.requestId ? { requestId: err.requestId } : {}),
+          ...(Object.keys(err.details).length > 0 ? { details: err.details } : {}),
+        },
+      });
+      return;
+    }
+    baseDispatch({
+      type: 'error-show',
+      report: {
+        title,
+        code: 'CLIENT_ERROR',
+        message: err instanceof Error ? err.message : String(err),
+      },
+    });
   }, []);
 
   const api = useMemo(() => (state.token ? createApiClient(state.token) : null), [state.token]);
@@ -142,8 +187,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [api, state.activeWorkflow, state.status?.status, state.refreshCounter]);
 
   const value = useMemo(
-    () => ({ state, api, dispatch, refresh, login }),
-    [state, api, dispatch, refresh, login],
+    () => ({ state, api, dispatch, refresh, login, reportError }),
+    [state, api, dispatch, refresh, login, reportError],
   );
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

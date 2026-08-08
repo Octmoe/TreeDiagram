@@ -4,6 +4,7 @@ import { TreePanel } from './components/TreePanel';
 import { Inspector } from './components/Inspector';
 import { ChangeSetDrawer } from './components/ChangeSetDrawer';
 import { WorkflowPanel } from './components/WorkflowPanel';
+import { ErrorDialog } from './components/ErrorDialog';
 
 function StatusBar() {
   const { state, dispatch } = useApp();
@@ -43,6 +44,7 @@ export function App() {
   return (
     <AppProvider>
       <Shell />
+      <ErrorDialog />
     </AppProvider>
   );
 }
