@@ -34,6 +34,7 @@ export * from './agent/fake-provider.js';
 export * from './agent/openai-provider.js';
 export * from './agent/schema-normalize.js';
 export * from './db/repositories/workflow-interaction.js';
+export * from './db/repositories/workflow-issue.js';
 export * from './agent/context-builder.js';
 export * from './agent/batch-order.js';
 export * from './agent/proposal-applier.js';

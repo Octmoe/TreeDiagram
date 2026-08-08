@@ -109,6 +109,7 @@ export function registerWorkflowRoutes(app: AppInstance, ctx: ServerContext): vo
       return {
         messages: ctx.db.repos.workflowInteraction.listMessages(run.id),
         openWait: ctx.db.repos.workflowInteraction.getOpenWait(run.id),
+        issues: ctx.db.repos.workflowIssue.listByRun(run.id),
       };
     },
   );

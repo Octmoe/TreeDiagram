@@ -84,6 +84,29 @@ export type WorkflowMessageKind = (typeof WORKFLOW_MESSAGE_KINDS)[number];
 export const WORKFLOW_WAIT_STATUSES = ['open', 'answered', 'cancelled'] as const;
 export type WorkflowWaitStatus = (typeof WORKFLOW_WAIT_STATUSES)[number];
 
+export const WORKFLOW_ISSUE_KINDS = [
+  'ambiguity',
+  'decision',
+  'approval',
+  'inconsistency',
+  'external_dependency',
+] as const;
+export type WorkflowIssueKind = (typeof WORKFLOW_ISSUE_KINDS)[number];
+
+export const WORKFLOW_ISSUE_GATES = ['before_proposal', 'before_apply', 'before_release'] as const;
+export type WorkflowIssueGate = (typeof WORKFLOW_ISSUE_GATES)[number];
+
+export const WORKFLOW_ISSUE_STATUSES = ['open', 'answered', 'resolved', 'superseded'] as const;
+export type WorkflowIssueStatus = (typeof WORKFLOW_ISSUE_STATUSES)[number];
+
+export const WORKFLOW_ANSWER_TYPES = [
+  'free_text',
+  'single_choice',
+  'multiple_choice',
+  'confirmation',
+] as const;
+export type WorkflowAnswerType = (typeof WORKFLOW_ANSWER_TYPES)[number];
+
 export const DELEGATION_MODES = ['human_final', 'ai_managed'] as const;
 export type DelegationMode = (typeof DELEGATION_MODES)[number];
 

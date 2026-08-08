@@ -81,6 +81,7 @@ function mapWait(row: WorkflowWaitRow): WorkflowWait {
 }
 
 export interface NewClarificationQuestion {
+  id?: string;
   question: string;
   blocking: boolean;
   relatedProposalRefs: string[];
@@ -139,7 +140,7 @@ export class WorkflowInteractionRepository {
     const messageId = newId<WorkflowMessageId>();
     const waitId = newId<WorkflowWaitId>();
     const persistedQuestions: WorkflowClarificationQuestion[] = questions.map((question) => ({
-      id: newId(),
+      id: question.id ?? newId(),
       question: question.question,
       blocking: question.blocking,
       relatedProposalRefs: question.relatedProposalRefs,

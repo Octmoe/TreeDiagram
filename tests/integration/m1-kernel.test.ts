@@ -39,7 +39,7 @@ describe('M1 数据库集成（§16.2）', () => {
     const ws = makeTestWorkspace();
     const row = ws.db.repos.project.requireSingleton();
     expect(row.name).toBe('test-project');
-    expect(ws.db.schemaVersion()).toBe(2);
+    expect(ws.db.schemaVersion()).toBe(3);
     const events = ws.db.repos.event.list(ws.project.id, 0, 10);
     expect(events).toEqual([]);
   });
@@ -65,6 +65,100 @@ describe('M1 数据库集成（§16.2）', () => {
         createdAt: ws.clock.now(),
       }),
     ).toThrow();
+  });
+
+  it('workflow issue 持久化稳定 ID、回答绑定与决议生命周期', () => {
+    const ws = makeTestWorkspace();
+    const now = ws.clock.now();
+    const runId = newId<import('@treediagram/contracts').WorkflowRunId>();
+    ws.db.repos.workflowRun.insert({
+      id: runId,
+      projectId: ws.project.id,
+      changeSetId: null,
+      workflowType: 'initialize',
+      targetNodeId: null,
+      status: 'running',
+      currentStep: 'running/assess',
+      input: {},
+      checkpoint: {},
+      summary: null,
+      error: null,
+      provider: 'fake',
+      model: 'test-model',
+      providerResponseId: null,
+      usage: null,
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      finishedAt: null,
+    });
+
+    const issue = ws.db.repos.workflowIssue.upsert(
+      runId,
+      {
+        issueKey: 'model-domain',
+        stage: 'initialize_readiness',
+        kind: 'ambiguity',
+        gate: 'before_proposal',
+        questionText: '具体建模领域是什么？',
+        rationaleText: '领域决定核心类型与验收方式。',
+        answerType: 'free_text',
+        options: [],
+        relatedRefs: [],
+      },
+      now,
+    );
+    const same = ws.db.repos.workflowIssue.upsert(
+      runId,
+      {
+        issueId: issue.id,
+        issueKey: issue.issueKey,
+        stage: issue.stage,
+        kind: issue.kind,
+        gate: issue.gate,
+        questionText: '具体建模领域及对象是什么？',
+        rationaleText: issue.rationaleText,
+        answerType: issue.answerType,
+        options: [],
+        relatedRefs: [],
+      },
+      now,
+    );
+    expect(same.id).toBe(issue.id);
+    expect(same.questionText).toContain('及对象');
+
+    const wait = ws.db.repos.workflowInteraction.createAgentWait(
+      runId,
+      '需要澄清',
+      [{ id: issue.id, question: same.questionText, blocking: true, relatedProposalRefs: [] }],
+      now,
+    );
+    ws.db.repos.workflowIssue.bindOpeningMessage([issue.id], wait.message.id, now);
+    const answer = ws.db.repos.workflowInteraction.appendUserResponse({
+      runId,
+      wait: wait.wait,
+      clientMessageId: randomUUID(),
+      contentText: '软件架构与程序结构。',
+      answers: [{ questionId: issue.id, answerText: '软件架构与程序结构。' }],
+      sourceAssetIds: [],
+      now,
+    });
+    ws.db.repos.workflowIssue.markAnswered([issue.id], answer.id, now);
+    expect(ws.db.repos.workflowIssue.getById(issue.id)).toMatchObject({
+      status: 'answered',
+      openedByMessageId: wait.message.id,
+      answeredByMessageId: answer.id,
+    });
+
+    ws.db.repos.workflowIssue.resolve(
+      [issue.id],
+      { kind: 'user_answer', messageId: answer.id },
+      now,
+    );
+    expect(ws.db.repos.workflowIssue.getById(issue.id)).toMatchObject({
+      status: 'resolved',
+      resolution: { kind: 'user_answer', messageId: answer.id },
+    });
   });
 
   it('one live ChangeSet partial unique index 生效', () => {

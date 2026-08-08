@@ -11,6 +11,7 @@ import type {
   ReviewItemId,
   SourceAssetId,
   WorkflowMessageId,
+  WorkflowIssueId,
   WorkflowRunId,
   WorkflowWaitId,
 } from '../ids.js';
@@ -37,6 +38,10 @@ import {
   WORKFLOW_MESSAGE_KINDS,
   WORKFLOW_MESSAGE_ROLES,
   WORKFLOW_WAIT_STATUSES,
+  WORKFLOW_ANSWER_TYPES,
+  WORKFLOW_ISSUE_GATES,
+  WORKFLOW_ISSUE_KINDS,
+  WORKFLOW_ISSUE_STATUSES,
   WORKFLOW_TYPES,
 } from '../enums.js';
 
@@ -60,6 +65,7 @@ export const DelegationPolicyIdSchema = Type.String(idShape) as BrandedId<Delega
 export const WorkflowRunIdSchema = Type.String(idShape) as BrandedId<WorkflowRunId>;
 export const WorkflowMessageIdSchema = Type.String(idShape) as BrandedId<WorkflowMessageId>;
 export const WorkflowWaitIdSchema = Type.String(idShape) as BrandedId<WorkflowWaitId>;
+export const WorkflowIssueIdSchema = Type.String(idShape) as BrandedId<WorkflowIssueId>;
 export const ReviewItemIdSchema = Type.String(idShape) as BrandedId<ReviewItemId>;
 
 // 领域字符串上限（HTTP contract 统一口径）。
@@ -107,6 +113,10 @@ export const WorkflowRunStatusSchema = Type.Union(literals(WORKFLOW_RUN_STATUSES
 export const WorkflowMessageRoleSchema = Type.Union(literals(WORKFLOW_MESSAGE_ROLES));
 export const WorkflowMessageKindSchema = Type.Union(literals(WORKFLOW_MESSAGE_KINDS));
 export const WorkflowWaitStatusSchema = Type.Union(literals(WORKFLOW_WAIT_STATUSES));
+export const WorkflowIssueKindSchema = Type.Union(literals(WORKFLOW_ISSUE_KINDS));
+export const WorkflowIssueGateSchema = Type.Union(literals(WORKFLOW_ISSUE_GATES));
+export const WorkflowIssueStatusSchema = Type.Union(literals(WORKFLOW_ISSUE_STATUSES));
+export const WorkflowAnswerTypeSchema = Type.Union(literals(WORKFLOW_ANSWER_TYPES));
 export const DelegationModeSchema = Type.Union(literals(DELEGATION_MODES));
 export const EventTypeSchema = Type.Union(literals(EVENT_TYPES));
 export const EvidenceKindSchema = Type.Union(literals(EVIDENCE_KINDS));

@@ -7,6 +7,7 @@ import {
   ProjectIdSchema,
   SourceAssetIdSchema,
   WorkflowMessageIdSchema,
+  WorkflowIssueIdSchema,
   WorkflowRunIdSchema,
   WorkflowWaitIdSchema,
   LIMITS,
@@ -15,6 +16,10 @@ import {
   WorkflowMessageRoleSchema,
   WorkflowRunStatusSchema,
   WorkflowWaitStatusSchema,
+  WorkflowAnswerTypeSchema,
+  WorkflowIssueGateSchema,
+  WorkflowIssueKindSchema,
+  WorkflowIssueStatusSchema,
   WorkflowTypeSchema,
 } from './common.js';
 
@@ -73,10 +78,40 @@ export const WorkflowWaitSchema = Type.Object(
 );
 export type WorkflowWait = Static<typeof WorkflowWaitSchema>;
 
+export const WorkflowIssueSchema = Type.Object(
+  {
+    id: WorkflowIssueIdSchema,
+    workflowRunId: WorkflowRunIdSchema,
+    issueKey: Type.String({ minLength: 1, maxLength: LIMITS.proposalRef }),
+    stage: Type.String({ minLength: 1, maxLength: LIMITS.workflowStep }),
+    kind: WorkflowIssueKindSchema,
+    gate: WorkflowIssueGateSchema,
+    status: WorkflowIssueStatusSchema,
+    questionText: Type.String({ minLength: 1, maxLength: LIMITS.rationale }),
+    rationaleText: Type.String({ maxLength: LIMITS.rationale }),
+    answerType: WorkflowAnswerTypeSchema,
+    options: Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.displayTitle }), {
+      maxItems: 20,
+    }),
+    relatedRefs: Type.Array(Type.String({ minLength: 1, maxLength: LIMITS.proposalRef }), {
+      maxItems: 20,
+    }),
+    openedByMessageId: Nullable(WorkflowMessageIdSchema),
+    answeredByMessageId: Nullable(WorkflowMessageIdSchema),
+    resolution: Nullable(Type.Record(Type.String(), Type.Unknown())),
+    createdAt: IsoTimestampSchema,
+    updatedAt: IsoTimestampSchema,
+    resolvedAt: Nullable(IsoTimestampSchema),
+  },
+  { additionalProperties: false },
+);
+export type WorkflowIssue = Static<typeof WorkflowIssueSchema>;
+
 export const WorkflowConversationSchema = Type.Object(
   {
     messages: Type.Array(WorkflowMessageSchema),
     openWait: Nullable(WorkflowWaitSchema),
+    issues: Type.Array(WorkflowIssueSchema),
   },
   { additionalProperties: false },
 );
