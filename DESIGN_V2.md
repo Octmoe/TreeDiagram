@@ -1,6 +1,6 @@
 # TreeDiagram V2 整体设计
 
-> 状态：新一轮设计基线
+> 状态：V2 架构决策基线
 >
 > 日期：2026-08-09
 >
@@ -72,14 +72,25 @@ TreeDiagram 负责：
 MCP 工具必须在无 UI 的客户端中可用，因此 UI 对协议是可选层。但对面向人的 TreeDiagram
 产品体验，常驻设计树是一级能力，不是结果卡片或临时预览。
 
-优先表现形态：
+首发采用 **Sidecar-first，Embedded-enhanced**：
 
-1. 宿主支持兼容的 MCP Apps UI 时，在会话附近嵌入树组件；
-2. 宿主不能固定或持久显示组件时，使用共享同一 MCP 服务的本地 Sidecar 窗口；
+1. 本地 Sidecar 提供完整、可常驻的设计树体验；
+2. 宿主支持兼容的 MCP Apps UI 时，复用同一前端核心提供嵌入式增强；
 3. 纯 CLI/自动化场景使用无头 MCP 工具，不降低领域能力。
 
 任何关键流程都不得依赖某个宿主私有 UI API。增强能力必须进行 feature detection，并提供 Sidecar
-或纯工具降级路径。
+或纯工具降级路径。Sidecar 不是临时过渡实现，而是跨宿主一致体验的正式产品表面。
+
+### 2.4 宿主策略
+
+V2 采用 **Codex-first，Hermes-second**：
+
+- Codex 是首个参考宿主，用于完成 Skill、MCP、Attention 与 Sidecar 的端到端闭环；
+- Hermes 是第二宿主兼容性门禁，用于验证 MCP Core 和工具语义没有被 Codex 私有能力污染；
+- 在 Hermes 贯穿验收通过前，MCP 工具契约不标记为跨宿主稳定版；
+- Host Adapter 可以使用宿主增强能力，但 Domain、Attention 和 MCP 工具不得按产品名分支。
+
+该策略选择的是开发和验证顺序，不表示 TreeDiagram 成为 Codex 专属产品。
 
 ## 3. 总体架构
 
@@ -196,6 +207,24 @@ Attention Context 默认按宿主会话和客户端隔离，不能使用一个�
 可以同时查看同一设计空间而不覆盖彼此焦点。
 
 设计变更通过 ChangeSet 和乐观并发控制协调；注意力冲突不应升级为设计冲突。
+
+### 5.5 生命周期与恢复
+
+Attention 使用分层生命周期：
+
+| 字段/状态 | 作用域 | 恢复规则 |
+| --- | --- | --- |
+| `selectedNodeIds` | UI client | 页面刷新后恢复；客户端长期失活后过期 |
+| `primaryNodeId` | host session | 同一宿主会话自动恢复 |
+| `pinnedNodeIds` | host session | 持续到用户明确取消 |
+| `scope` | host session | 同一任务自动恢复 |
+| `agentFocus` | 单轮工具活动 | 调用结束后转为短期活动记录 |
+
+Attention 的身份键至少包含 `workspaceId + hostKind + hostSessionRef + clientRef`。
+
+新宿主会话不得静默继承旧会话焦点。若存在可恢复的上次焦点，Sidecar 只提示用户“恢复上次焦点”；
+确认后复制为新的 Attention Context。项目根目标等长期设计事实始终通过 Design State 装配，不依赖
+Attention 固定。
 
 ## 6. 核心用户体验
 
@@ -319,6 +348,50 @@ V1 的工作流名称可以保留为可组合 Skills，但不再拥有固定服�
 
 高权限工具必须要求可验证的用户确认或宿主审批上下文。Agent 的自然语言声明不能代替授权。
 
+### 8.5 ChangeSet 单写者规则
+
+V2 首版保持一个工作区一个活动 ChangeSet，并在任一时刻只允许一个宿主会话写入。其他会话可以
+并发读取和检查，但不能静默追加候选。
+
+```ts
+interface ChangeSetWriteLease {
+  changeSetId: string;
+  ownerHostSessionRef: string;
+  baseVersion: number;
+  acquiredAt: string;
+  renewedAt: string;
+}
+```
+
+- 每次写操作同时校验实体 `baseRevisionId` 和 ChangeSet version；
+- 用户可以在 Sidecar 中显式接管写入权；
+- 接管不删除已有候选，只改变后续写入者；
+- 旧写入者继续提交时收到 `state_conflict`，必须刷新后重新判断；
+- 多 Draft ChangeSet、自动合并和多 Agent 并行写入不进入 V2 首版。
+
+### 8.6 ApprovalGrant
+
+TreeDiagram 不接受“Agent 声称用户已经同意”作为高权限操作依据。用户必须通过 Sidecar 或受信宿主
+审批表面生成一次性 `ApprovalGrant`：
+
+```ts
+interface ApprovalGrant {
+  id: string;
+  workspaceId: string;
+  action: "adopt" | "publish" | "confirm_root" | "expand_delegation";
+  targetDigest: string;
+  expectedVersion: number;
+  hostSessionRef?: string;
+  expiresAt: string;
+  nonce: string;
+  consumedAt?: string;
+}
+```
+
+Grant 与动作、目标内容摘要和版本绑定，内容发生变化后立即失效；成功执行后单次消费。宿主审批能力
+可以由 Host Adapter 兑换为 TreeDiagram Grant，但不能绕过 Grant 校验。V2 本地单用户版使用数据库
+记录和高熵 opaque token，不预先引入公钥基础设施。
+
 ## 9. 错误与恢复模型
 
 V2 不再以一个 WorkflowRun 的 `failed` 代表所有异常。每次工具调用返回以下错误类别之一：
@@ -371,12 +444,16 @@ Agent 连续产生低质量结果不是基础设施失败。它可以继续解�
 
 ### 10.2 MCP App 与 Sidecar
 
-前端核心使用宿主无关的数据和动作接口：
+Sidecar 是 V2 首发和验收基线；MCP App 是共享前端核心上的第二表现层。前端核心使用宿主无关的
+数据和动作接口：
 
+- Sidecar 模式通过本地 HTTP/MCP gateway 与同一服务通信，并负责完整常驻布局；
 - MCP App 模式通过标准桥接接收工具输入/结果、调用工具和发送后续消息；
-- Sidecar 模式通过本地 HTTP/MCP gateway 与同一服务通信；
 - 两种模式订阅相同事件并渲染相同 Attention Context；
 - 宿主私有状态只能作为增强缓存，不能成为权威状态。
+
+首版必须在没有嵌入式 UI 的条件下完成全部人工确认和焦点交互。宿主提供 fullscreen、picture-in-picture、
+消息桥接或状态缓存时，通过能力探测逐项启用，不根据宿主名称硬编码行为。
 
 OpenAI 插件架构参考：
 
@@ -389,7 +466,7 @@ Hermes MCP 兼容参考：
 
 ## 11. 数据与事件
 
-### 11.1 保留的领域实体
+### 11.1 核心领域实体
 
 - Project / Workspace
 - Node / NodeRevision
@@ -401,14 +478,16 @@ Hermes MCP 兼容参考：
 - SourceAsset
 - EventOutbox
 
-### 11.2 新增实体
+### 11.2 协作实体
 
 - AttentionContext
 - HostSessionBinding
 - UIClientPresence（可选、短期）
 - AgentActivity（仅公开当前阶段、焦点和工具结果，不保存私有推理）
+- ChangeSetWriteLease
+- ApprovalGrant
 
-### 11.3 退出默认产品路径的实体
+### 11.3 明确不建立的实体
 
 - WorkflowRun
 - WorkflowMessage
@@ -416,7 +495,8 @@ Hermes MCP 兼容参考：
 - WorkflowIssue
 - ModelCallTrace
 
-迁移期间这些表保持只读兼容，用于查看 V1 历史；V2 不再向其中写入新运行。
+这些是 V1 Harness 的运行概念，不进入 V2 Schema，也不提供兼容表。对话和运行状态由宿主持有；
+TreeDiagram 只记录设计事实、共享注意力、公开 Agent 活动和受控变更。
 
 ### 11.4 事件
 
@@ -438,6 +518,7 @@ Attention 高频事件与设计审计事件应使用不同保留策略，避免�
 - 节点选择不授予写权限。
 - Agent 只能提出变更，除非存在明确的分支托管策略。
 - 根部确认、Release 发布和托管范围扩大始终需要用户确认。
+- Adopt、Publish、根部确认和托管扩大必须消费与目标 digest/version 绑定的一次性 ApprovalGrant。
 - 工具返回中标注副作用和授权需求。
 - Sidecar 默认只监听 loopback；远程 MCP 必须有独立认证与最小权限。
 - HostSessionBinding 不保存宿主完整聊天内容，只保存不透明会话引用。
@@ -462,46 +543,37 @@ Attention 高频事件与设计审计事件应使用不同保留策略，避免�
 
 TreeDiagram 的核心语义必须在 Level 0 成立，质变体验从 Level 1 开始，Level 2/3 提供最佳整合。
 
-## 14. V1 资产处置
+## 14. V1 边界与全新产品策略
 
-完整 V1 standalone harness 已由 Git tag `archive/v1-harness-baseline-2026-08-09` 冻结。新分支中的旧代码
-仅作为迁移来源，不再代表产品方向。
+完整 V1 standalone harness 已由 Git tag `archive/v1-harness-baseline-2026-08-09` 冻结。V2 作为全新
+产品开发，与 V1 只共享问题背景和经过重新确认的领域概念，不承担迁移或兼容义务。
 
-### 14.1 保留并演进
+V2 明确不提供：
 
-- `packages/contracts` 中的领域类型和 Schema；
-- `packages/core` 中与模型无关的数据库、服务和一致性规则；
-- 节点、关系、修订、ChangeSet、Release 的测试；
-- Web 树、Inspector 和差异组件中可复用的视图逻辑；
-- 本地优先、可审计、确定性写入原则。
-
-### 14.2 替换
-
-- 模型 Provider 与 Workflow Runner → 宿主 Agent + Skills；
-- Workflow HTTP API → MCP 工具面；
-- WorkflowPanel → 宿主聊天绑定与共享焦点栏；
-- readiness/proposal/repair 大调用 → 多轮、小步工具提案；
-- workflow retry → 工具级可恢复错误与 Agent 自修正。
-
-### 14.3 暂时兼容
-
-- 原 HTTP API 可作为 Sidecar UI 的过渡传输层；
+- V1 workspace 或数据库自动迁移；
+- V1 HTTP API、Workflow API 或表结构兼容；
 - V1 Workflow 历史只读展示；
-- 原 Web UI 在 Attention UI 完成前可继续作为领域调试器。
+- V1 与 V2 数据双写或同步；
+- 在 V1 数据库上执行原地升级。
 
-## 15. 迁移顺序
+旧源码在 V2 开发分支中只作为实现参考，不是过渡运行时。可复用代码必须经过显式提取、重新命名和
+V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成”V2。V2 使用新的 workspace 标识、
+数据库 Schema 和应用入口。
 
-1. **冻结 V1**：建立归档 tag，停止向旧 Workflow 架构添加特性。
-2. **切出宿主无关内核**：确认 Core 不依赖模型、Fastify、React 或宿主对象。
-3. **定义 MCP 契约**：先实现读取、Attention 和小步提案工具。
-4. **建立共享注意力**：实现 session-scoped Attention Context 与事件同步。
-5. **改造常驻树 UI**：移除 WorkflowPanel，加入焦点、范围、Agent 活动和消息动作。
-6. **编写 Skills**：Initialize、Derive、Grill、Unbox、Re-evaluate 转为宿主工作方法。
-7. **接入首个宿主**：选择一个支持范围明确的宿主完成贯穿闭环。
-8. **接入第二宿主**：验证 MCP 核心未被首个宿主私有能力污染。
-9. **停写 V1 Workflow 表**：保留历史读取和迁移工具。
+## 15. 实施顺序
 
-每一步都应保持设计数据可读，并允许从归档 tag 恢复旧应用。
+1. **冻结 V1**：归档 tag 已建立，旧产品停止功能演进。
+2. **建立干净 V2 骨架**：创建新的 package/app 边界和全新 workspace Schema。
+3. **实现 Design State Core**：节点、关系、修订、ChangeSet、Release 和确定性错误。
+4. **实现 MCP 读取面**：完成无头查询、上下文装配和结构化错误。
+5. **实现 Attention Service**：完成会话绑定、恢复提示、事件和 Agent Focus。
+6. **实现 Sidecar**：以常驻树完成选择、固定、Scope、差异和 Agent 活动闭环。
+7. **实现受控写入**：小步提案、单写者 lease、乐观并发和 ApprovalGrant。
+8. **接入 Codex**：发布首个 Skill + MCP Host Adapter，完成端到端贯穿验收。
+9. **接入 Hermes**：验证无头 MCP、Attention 和工具语义，冻结跨宿主 V1 工具契约。
+10. **增加嵌入式 UI**：在兼容宿主上复用 Sidecar 前端核心，按能力逐项增强。
+
+更详细的里程碑和完成条件见 [IMPLEMENTATION_PLAN_V2.md](./IMPLEMENTATION_PLAN_V2.md)。
 
 ## 16. 首个贯穿验收场景
 
@@ -515,7 +587,8 @@ TreeDiagram 的核心语义必须在 Level 0 成立，质变体验从 Level 1 �
 8. 用户多选两个候选节点并要求比较，Agent 获得 comparison scope。
 9. 用户在树中确认选定变更，未确认变更继续保留在 ChangeSet。
 10. 发布前由确定性检查器验证一致性和权限，用户显式发布 Release。
-11. 关闭宿主会话后重新进入，设计状态、ChangeSet 和固定焦点仍可恢复；聊天历史继续由宿主管理。
+11. 关闭宿主会话后重新进入，设计状态和 ChangeSet 仍存在；用户明确选择是否恢复上次焦点，聊天历史
+    继续由宿主管理。
 
 ## 17. 验收原则
 
@@ -528,15 +601,28 @@ TreeDiagram 的核心语义必须在 Level 0 成立，质变体验从 Level 1 �
 - Tree UI 关闭不影响 Agent 使用 MCP；宿主关闭不影响设计状态持久化。
 - 同一 MCP Server 至少能被两个宿主使用，且领域行为一致。
 - 高权限操作不能由 Agent 绕过用户确认。
-- V1 归档可以完整构建和恢复。
+- 同一时刻只有持有 ChangeSetWriteLease 的宿主会话可以写入。
+- 高权限操作只能通过与目标 digest/version 绑定的一次性 ApprovalGrant 完成。
+- V2 可以从全新空 workspace 完成贯穿场景，不读取任何 V1 文件或数据库。
 
-## 18. 当前未决事项
+## 18. 已收敛决策与延后范围
 
-1. 首个落地宿主选择 Codex 还是 Hermes，以及目标版本的 UI 能力边界。
-2. Attention Context 的默认恢复期限和跨会话继承规则。
-3. 嵌入式 MCP UI 与独立 Sidecar 的首发优先级。
-4. ChangeSet 是否允许多个宿主会话并行写入，还是 V2 首版保持单写者。
-5. 用户确认如何形成跨宿主可验证、不可伪造的授权凭据。
-6. 原 V1 工作区的自动迁移、只读打开和回滚策略。
+### 18.1 已收敛
 
-这些问题进入下一轮收敛设计，不影响本文件确定的产品边界。
+| 事项 | 决定 |
+| --- | --- |
+| 首个宿主 | Codex-first，Hermes-second |
+| 常驻 UI | Sidecar-first，Embedded-enhanced |
+| Attention 恢复 | 同会话自动恢复；跨会话必须由用户明确恢复 |
+| ChangeSet 并发 | V2 首版一个活动 ChangeSet、一个写入 lease |
+| 用户确认 | 一次性、目标绑定、版本绑定的 ApprovalGrant |
+| V1 数据 | 不迁移、不兼容；V2 作为全新产品和全新 workspace |
+
+### 18.2 延后到 V2 首版之后
+
+- 多 Draft ChangeSet、自动合并和多 Agent 并行写入；
+- 远程多用户协作与组织级身份系统；
+- 以宿主固定面板完全替代 Sidecar；
+- 不经用户恢复确认的跨会话 Attention 自动继承；
+- V1 数据导入器或兼容读取器；
+- 公钥签名、远程授权服务等复杂 ApprovalGrant 基础设施。

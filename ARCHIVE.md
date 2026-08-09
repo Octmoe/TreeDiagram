@@ -19,5 +19,5 @@ git switch --detach archive/v1-harness-baseline-2026-08-09
 git switch -c codex/v1-maintenance archive/v1-harness-baseline-2026-08-09
 ```
 
-V2 分支暂时保留旧源文件作为迁移资产；在 MCP、Attention Context 和新树 UI 建立替代能力前，
-不进行不可恢复的批量删除。
+V2 按全新产品开发，不读取、迁移或兼容 V1 workspace。V2 分支暂时可保留旧源文件作为实现参考；
+新代码不得依赖 V1 Workflow 或数据库格式。旧文件后续可以在归档 tag 可恢复的前提下分批移出活跃源码树。

@@ -8,11 +8,12 @@ TreeDiagram V2 是一个面向 AI Agent 协作的持久设计空间。宿主 Har
 TreeDiagram 负责设计状态、共享注意力、确定性校验、ChangeSet、Release，以及让用户可以直接选择节点
 来指示 Agent 工作的常驻树形界面。
 
-下文记录的命令和界面描述仍对应已归档的 V1 实现，在 V2 迁移期间仅作为运行与迁移参考。
+下文记录的命令和界面描述仍对应已归档的 V1 实现，仅用于运行或审计旧产品；V2 不兼容这些入口。
 
 ## 设计文档
 
-- [V2 整体设计](./DESIGN_V2.md)：当前产品边界、Attention Context、Skill/MCP/UI 架构与迁移策略。
+- [V2 整体设计](./DESIGN_V2.md)：当前产品边界、Attention Context、Skill/MCP/UI 架构与全新产品策略。
+- [V2 实施计划](./IMPLEMENTATION_PLAN_V2.md)：全新产品的里程碑、完成条件和测试门禁。
 - [V1 归档说明](./ARCHIVE.md)：归档引用、恢复方式与资产处置。
 - [V1 实现规格](./V1_SPEC.md)：已归档的首版范围、领域模型、工作流、架构与验收标准。
 - [V1 设计探索与决策记录](./DESIGN.md)：已归档的产品共识、决策依赖和逐轮推演历史。
