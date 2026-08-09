@@ -814,18 +814,29 @@ export class CoreWorkflowRunner {
     const now = this.clock.now();
     let unresolved: WorkflowIssue[] = [];
     this.db.transaction(() => {
+      const newlyResolvedIssueIds: WorkflowIssue['id'][] = [];
       for (const issueId of result.resolvedIssueIds) {
         const issue = this.db.repos.workflowIssue.getById(issueId);
-        if (!issue || issue.workflowRunId !== run.id || issue.status !== 'answered') {
+        if (!issue || issue.workflowRunId !== run.id) {
           throw new DomainError(
             'MODEL_OUTPUT_INVALID',
             'readiness 只能解决当前 run 中已有用户回答的 issue',
             { issueId, status: issue?.status ?? null },
           );
         }
+        // retry/进程恢复时模型可能再次返回此前已解决的 ID；这是同一 run 内的幂等重放。
+        if (issue.status === 'resolved') continue;
+        if (issue.status !== 'answered') {
+          throw new DomainError(
+            'MODEL_OUTPUT_INVALID',
+            'readiness 只能解决当前 run 中已有用户回答的 issue',
+            { issueId, status: issue.status },
+          );
+        }
+        newlyResolvedIssueIds.push(issue.id);
       }
       this.db.repos.workflowIssue.resolve(
-        result.resolvedIssueIds,
+        newlyResolvedIssueIds,
         { kind: 'readiness_resolution', summary: result.summary },
         now,
       );
@@ -1165,13 +1176,16 @@ export class CoreWorkflowRunner {
         const legacyInitialize =
           run.workflowType === 'initialize' && (checkpoint.proposals?.length ?? 0) > 0;
         if (!legacyInitialize) {
-          const readiness = await this.assessReadiness(
-            run,
-            checkpoint,
-            `${run.workflowType}_readiness`,
-            context,
-            controller.signal,
-          );
+          // failed-stage retry 复用已经成功的 readiness；任何用户等待/预检澄清都会先将其清空。
+          const readiness =
+            checkpoint.readiness ??
+            (await this.assessReadiness(
+              run,
+              checkpoint,
+              `${run.workflowType}_readiness`,
+              context,
+              controller.signal,
+            ));
           if (!readiness) return;
           this.assertNotCancelled(runId);
           context = this.attachConversation(run.id, context);

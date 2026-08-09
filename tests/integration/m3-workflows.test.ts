@@ -361,6 +361,49 @@ describe('M3 initialize 工作流（§13.1）', () => {
     ]);
   });
 
+  it('提案生成失败后的 retry 复用已完成 readiness，只重跑失败阶段', async () => {
+    const ws = makeTestWorkspace();
+    const source = ws.services.sources.addSource(
+      ws.project.id,
+      {
+        kind: 'text',
+        originalName: 'retry-proposal.txt',
+        mediaType: 'text/plain',
+        contentText: '验证 failed-stage retry 不重复 readiness',
+      },
+      userAuthor,
+    );
+    const provider = FakeModelProvider.scripted([
+      modelError('MODEL_PROVIDER_FAILED', '提案生成临时失败', { retryable: false }),
+      proposal([nodeAction('root1', { roles: ['root'] })], [], {
+        workflowType: 'initialize',
+      }),
+    ]);
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), {
+      workflowType: 'initialize',
+      targetNodeId: null,
+      changeSetId: null,
+      sourceAssetIds: [source.id],
+      focusInstruction: null,
+    });
+
+    expect((await runner.waitForCompletion(run.id)).status).toBe('failed');
+    expect(provider.calls.map((call) => call.outputSchemaName)).toEqual([
+      'WorkflowReadiness',
+      'DesignProposal',
+    ]);
+
+    runner.retry(freshProject(ws), run.id);
+    const final = await runner.waitForCompletion(run.id);
+    expect(final.currentStep).toBe('waiting_approval');
+    expect(provider.calls.map((call) => call.outputSchemaName)).toEqual([
+      'WorkflowReadiness',
+      'DesignProposal',
+      'DesignProposal',
+    ]);
+  });
+
   it('initialize 汇总 readiness 与 proposal 两次 provider token 用量', async () => {
     const ws = makeTestWorkspace();
     const source = ws.services.sources.addSource(

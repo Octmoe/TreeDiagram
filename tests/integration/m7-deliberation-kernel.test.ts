@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { asId, type StartWorkflowRequest } from '@treediagram/contracts';
-import { CoreWorkflowRunner, FakeModelProvider, userAuthor } from '@treediagram/core';
+import { CoreWorkflowRunner, FakeModelProvider, modelError, userAuthor } from '@treediagram/core';
 import { freshProject, makeTestWorkspace, type TestWorkspace } from '../helpers/workspace.js';
 
 function makeRunner(ws: TestWorkspace, provider: FakeModelProvider) {
@@ -184,6 +184,77 @@ describe('clarification-aware deliberation kernel', () => {
     confirmRoots(ws);
     runner.resume(freshProject(ws), run.id);
     expect((await runner.waitForCompletion(run.id)).status).toBe('succeeded');
+  });
+
+  it('retry 可幂等重放模型已声明 resolved 的 Issue ID', async () => {
+    const ws = makeTestWorkspace();
+    const source = addSource(ws);
+    let readinessCalls = 0;
+    let proposalCalls = 0;
+    const provider = new FakeModelProvider(
+      (call) => {
+        if (call.outputSchemaName === 'WorkflowReadiness') {
+          readinessCalls += 1;
+          if (readinessCalls === 1) {
+            return readiness({
+              readiness: 'needs_user',
+              issues: [
+                {
+                  issueId: null,
+                  issueKey: 'integration-mode',
+                  kind: 'decision',
+                  gate: 'before_proposal',
+                  question: '如何集成？',
+                  rationale: '影响整体入口。',
+                  answerType: 'free_text',
+                  options: [],
+                  relatedRefs: [],
+                },
+              ],
+            });
+          }
+          const context = JSON.parse(call.input) as {
+            data: { workflowIssues: Array<{ issueId: string }> };
+          };
+          return readiness({
+            resolvedIssueIds: [context.data.workflowIssues[0]!.issueId],
+          });
+        }
+        proposalCalls += 1;
+        if (proposalCalls === 1) {
+          throw modelError('MODEL_PROVIDER_FAILED', '提案阶段临时失败', { retryable: false });
+        }
+        return proposal([nodeAction('root', 'goal', { roles: ['root'] })]);
+      },
+      { autoReadiness: false },
+    );
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), request(source.id));
+    await runner.waitForCompletion(run.id);
+    const wait = ws.db.repos.workflowInteraction.getOpenWait(run.id)!;
+    runner.respond(freshProject(ws), run.id, {
+      waitId: wait.id,
+      clientMessageId: asId(randomUUID()),
+      message: '通过 MCP。',
+      answers: [],
+      sourceAssetIds: [],
+    });
+    const failed = await runner.waitForCompletion(run.id);
+    expect(failed.status).toBe('failed');
+    expect(ws.db.repos.workflowIssue.listByRun(run.id)[0]?.status).toBe('resolved');
+
+    // 模拟旧 checkpoint/恢复数据缺少 readiness，迫使 retry 再次评估并重放 resolvedIssueIds。
+    ws.db.repos.workflowRun.update(
+      run.id,
+      { checkpoint: { ...failed.checkpoint, readiness: null } },
+      ws.ctx.clock.now(),
+    );
+    runner.retry(freshProject(ws), run.id);
+    const final = await runner.waitForCompletion(run.id);
+
+    expect(final.currentStep).toBe('waiting_approval');
+    expect(readinessCalls).toBe(3);
+    expect(ws.db.repos.workflowIssue.listByRun(run.id)[0]?.status).toBe('resolved');
   });
 
   it('blocking Question action 在虚拟预检中转成 before_apply Issue，零领域写入', async () => {
