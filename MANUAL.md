@@ -190,17 +190,18 @@ GET /api/v1/query?view=release&type=decision
 
 ## 10. 异常与恢复
 
-| 情况              | 现象                                                    | 处理                                                   |
-| ----------------- | ------------------------------------------------------- | ------------------------------------------------------ |
-| 信息存在关键歧义  | run = `waiting_user`，面板显示“等待回答”与语义 Issue    | 在对话框回答；`respond` 后重新做就绪评估               |
-| root 尚未确认     | run = `waiting_user`，面板显示“等待审批”                | 将 root revise 为 `user_confirmed`，点“重新检查并完成” |
-| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                             |
-| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                                  |
-| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | “重试失败阶段”或 `POST /workflows/:id/retry`           |
-| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | retry 从本地 checkpoint 幂等续跑                       |
-| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）           |
-| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake`        |
-| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正           |
+| 情况              | 现象                                                    | 处理                                                                              |
+| ----------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 信息存在关键歧义  | run = `waiting_user`，面板显示“等待回答”与语义 Issue    | 在对话框回答；`respond` 后重新做就绪评估                                          |
+| root 尚未确认     | run = `waiting_user`，面板显示“等待审批”                | 将 root revise 为 `user_confirmed`，点“重新检查并完成”                            |
+| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                                                        |
+| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                                                             |
+| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | “重试失败阶段”或 `POST /workflows/:id/retry`                                      |
+| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | retry 从本地 checkpoint 幂等续跑                                                  |
+| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）                                      |
+| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake`                                   |
+| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正                                      |
+| 结构化输出被截断  | 模型记录显示 `reason=max_output_tokens`                 | 系统自动扩容重试一次；仍失败时调高 `model.json.outputTokens` 与必要的 `timeoutMs` |
 
 > 澄清、审批与故障重试彼此分离：`respond` 必须携带当前 `waitId` 与幂等 `clientMessageId`；
 > `retry` 只接受 failed；`resume` 用于重新检查已经由用户在领域对象上完成的审批或外部 blocker，
@@ -225,6 +226,11 @@ GET /api/v1/query?view=release&type=decision
 
 **Q：模型配置错了启动不了？**
 启动日志会给出带文件路径的具体错误（未知字段/非法 URL/缺少 apiKey 等），按提示修正 `model.json`。
+
+**Q：模型记录显示 `max_output_tokens`？**
+系统只对这种明确截断自动扩容一次。默认预算为 readiness 8K、普通 proposal 16K、Initialize/repair
+32K，扩容上限 64K；可在 `model.json.outputTokens` 中逐项覆盖。若设置很大的输出预算，也应同步增加
+`timeoutMs`，否则可能从 token 截断变成请求超时。
 
 **Q：数据在哪、怎么备份？**
 全部在 `<workspace>/.treediagram/`。停服务后复制 `state.sqlite` + `workspace.json` 即完成备份。

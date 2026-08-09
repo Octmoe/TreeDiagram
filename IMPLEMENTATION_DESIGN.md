@@ -1063,6 +1063,11 @@ interface ModelProvider {
 - 默认模型 `gpt-5.6-terra`，由 `TREEDIAGRAM_MODEL` 覆盖。
 - 默认 reasoning：initialize/derive/reevaluate=medium，grill/unbox=high。
 - 网络、timeout、429、5xx 最多重试 2 次，等待 1 秒、4 秒；用户取消、拒绝、schema 不合法或其他 4xx 不自动反复重试。
+- 结构化输出预算按阶段配置：readiness=8,192、普通 proposal=16,384、Initialize=32,768、
+  repair=32,768，默认 retry ceiling=65,536。provider 明确返回 `reason=max_output_tokens` 时，
+  Runner 在零领域写入的同一阶段把预算加倍重试一次；其他 `MODEL_OUTPUT_INVALID` 不重试。
+- `<workspace>/.treediagram/model.json` 的 `outputTokens` 可逐项覆盖上述预算；
+  `retryCeiling` 必须不小于所有初始预算。失败与扩容调用分别保留模型轨迹、responseId 和 usage。
 - 每次调用使用 AbortController；Workflow cancel 立即 abort 当前请求，取消后到达的响应不得 apply。
 - API key 只读取 `OPENAI_API_KEY`，缺失时 Agent workflow 返回配置错误，但 M1/M2 人工功能仍可运行。
 

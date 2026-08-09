@@ -87,13 +87,22 @@ Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
   "apiKey": "sk-...",
   "baseUrl": "https://your-gateway.example.com/v1",
   "model": "gpt-5.6-terra",
-  "timeoutMs": 300000
+  "timeoutMs": 300000,
+  "outputTokens": {
+    "readiness": 8192,
+    "proposal": 16384,
+    "initialize": 32768,
+    "repair": 32768,
+    "retryCeiling": 65536
+  }
 }
 ```
 
 - `provider`：`openai`（默认，需 `apiKey`）或 `fake`（离线演示，不得再设 `apiKey/baseUrl`）；
 - `baseUrl`：可选，指向任何 OpenAI 兼容端点（网关/代理/自托管）；
 - `model`、`timeoutMs`：可选，覆盖对应环境变量；
+- `outputTokens`：可选的阶段预算覆盖。默认 Initialize/修复为 32K，普通提案 16K，就绪评估 8K；
+  provider 明确以 `max_output_tokens` 截断时自动把当次预算加倍重试一次，但不超过 `retryCeiling`；
 - 合并优先级：**配置文件 > 环境变量 > 默认值**；配置文件只含部分字段时，其余字段回退到环境变量；
 - 文件是敏感数据：启动日志只打印 provider 名称与 baseUrl，绝不打印 `apiKey`；
 - 文件不合法（JSON 错误/未知字段/非法值）会在启动时给出带路径的明确错误并拒绝启动。
