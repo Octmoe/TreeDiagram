@@ -69,7 +69,25 @@ export interface WorkflowRunnerConfig {
   model: string;
   /** sha256(workspaceId) 的前 32 个十六进制字符（§12.2）。 */
   safetyIdentifier: string;
+  /** 各类结构化输出的预算；未提供的字段使用保守默认值。 */
+  outputTokenBudgets?: Partial<WorkflowOutputTokenBudgets>;
 }
+
+export interface WorkflowOutputTokenBudgets {
+  readiness: number;
+  proposal: number;
+  initialize: number;
+  repair: number;
+  retryCeiling: number;
+}
+
+export const DEFAULT_WORKFLOW_OUTPUT_TOKEN_BUDGETS: Readonly<WorkflowOutputTokenBudgets> = {
+  readiness: 8_192,
+  proposal: 16_384,
+  initialize: 32_768,
+  repair: 32_768,
+  retryCeiling: 65_536,
+};
 
 interface RunCheckpoint {
   steps: string[];
@@ -153,7 +171,6 @@ const TRACE_MAX_INSTRUCTIONS = 8_000;
 const TRACE_MAX_INPUT = 12_000;
 const TRACE_MAX_RESPONSE = 16_000;
 const TRACE_MAX_CALLS = 50;
-const MODEL_MAX_OUTPUT_TOKENS = 16_384;
 const MAX_PREFLIGHT_REPAIRS = 2;
 const UNBOX_CONTAINER_NODE_REF = '__unbox_container_node__';
 const UNBOX_CONTAINER_REVISION_REF = '__unbox_container_revision__';
@@ -254,6 +271,10 @@ export class CoreWorkflowRunner {
 
   private get clock() {
     return this.ctx.clock;
+  }
+
+  private outputTokenBudget(kind: keyof WorkflowOutputTokenBudgets): number {
+    return this.config.outputTokenBudgets?.[kind] ?? DEFAULT_WORKFLOW_OUTPUT_TOKEN_BUDGETS[kind];
   }
 
   /** 重启恢复（§4.6）：遗留 queued/running 标记为 failed(PROCESS_INTERRUPTED)，可 resume。 */
@@ -554,6 +575,7 @@ export class CoreWorkflowRunner {
     checkpoint: RunCheckpoint,
     stage: string,
     request: StructuredGenerationRequest,
+    allowExpandedRetry = true,
   ): Promise<StructuredGenerationResult<T>> {
     const calls = (checkpoint.modelCalls ??= []);
     // 进程中断后 resume 会新建调用；把遗留 running 轨迹明确标成失败，避免看似仍在等待。
@@ -605,6 +627,20 @@ export class CoreWorkflowRunner {
     } catch (error) {
       trace.status = request.signal?.aborted ? 'cancelled' : 'failed';
       trace.finishedAt = this.clock.now();
+      if (error instanceof DomainError) {
+        const responseId = error.details['responseId'];
+        if (typeof responseId === 'string') trace.providerResponseId = responseId;
+        const usage = error.details['usage'];
+        if (
+          usage &&
+          typeof usage === 'object' &&
+          typeof (usage as Record<string, unknown>)['inputTokens'] === 'number' &&
+          typeof (usage as Record<string, unknown>)['outputTokens'] === 'number' &&
+          typeof (usage as Record<string, unknown>)['totalTokens'] === 'number'
+        ) {
+          trace.usage = usage as ModelUsage;
+        }
+      }
       trace.error = {
         code: error instanceof DomainError ? error.code : 'MODEL_PROVIDER_FAILED',
         message: redactSecrets(error instanceof Error ? error.message : String(error)).slice(
@@ -613,6 +649,30 @@ export class CoreWorkflowRunner {
         ),
       };
       this.patch(runId, { checkpoint: checkpoint as unknown as Record<string, unknown> });
+      const currentMax = request.maxOutputTokens;
+      const retryCeiling = this.outputTokenBudget('retryCeiling');
+      const mayExpand =
+        allowExpandedRetry &&
+        !request.signal?.aborted &&
+        error instanceof DomainError &&
+        error.code === 'MODEL_OUTPUT_INVALID' &&
+        error.details['reason'] === 'max_output_tokens' &&
+        typeof currentMax === 'number' &&
+        currentMax < retryCeiling;
+      if (mayExpand) {
+        const expandedMax = Math.min(currentMax * 2, retryCeiling);
+        const retried = await this.generateWithTrace<T>(
+          runId,
+          checkpoint,
+          stage,
+          { ...request, maxOutputTokens: expandedMax },
+          false,
+        );
+        return {
+          ...retried,
+          usage: trace.usage ? sumModelUsage(trace.usage, retried.usage) : retried.usage,
+        };
+      }
       throw error;
     }
   }
@@ -737,7 +797,7 @@ export class CoreWorkflowRunner {
       input: JSON.stringify(context),
       outputSchemaName: 'WorkflowReadiness',
       outputSchema: WorkflowReadinessSchema,
-      maxOutputTokens: 8_192,
+      maxOutputTokens: this.outputTokenBudget('readiness'),
       reasoningEffort: 'low',
       safetyIdentifier: this.config.safetyIdentifier,
       signal,
@@ -887,7 +947,7 @@ export class CoreWorkflowRunner {
             }),
             outputSchemaName: 'DesignProposal',
             outputSchema: DesignProposalSchema,
-            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: this.outputTokenBudget('repair'),
             reasoningEffort: 'medium',
             safetyIdentifier: this.config.safetyIdentifier,
             signal,
@@ -1134,7 +1194,7 @@ export class CoreWorkflowRunner {
               input: JSON.stringify(context),
               outputSchemaName: 'DesignProposal',
               outputSchema: DesignProposalSchema,
-              maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+              maxOutputTokens: this.outputTokenBudget('initialize'),
               reasoningEffort: 'low',
               safetyIdentifier: this.config.safetyIdentifier,
               signal: controller.signal,
@@ -1171,7 +1231,7 @@ export class CoreWorkflowRunner {
               }),
               outputSchemaName: 'DesignProposal',
               outputSchema: DesignProposalSchema,
-              maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+              maxOutputTokens: this.outputTokenBudget('initialize'),
               reasoningEffort: 'low',
               safetyIdentifier: this.config.safetyIdentifier,
               signal: controller.signal,
@@ -1198,7 +1258,7 @@ export class CoreWorkflowRunner {
             input: JSON.stringify(context),
             outputSchemaName: 'DesignProposal',
             outputSchema: DesignProposalSchema,
-            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: this.outputTokenBudget('initialize'),
             reasoningEffort: 'medium',
             safetyIdentifier: this.config.safetyIdentifier,
             signal: controller.signal,
@@ -1227,7 +1287,7 @@ export class CoreWorkflowRunner {
             input: JSON.stringify(context),
             outputSchemaName: 'DesignProposal',
             outputSchema: DesignProposalSchema,
-            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: this.outputTokenBudget('proposal'),
             reasoningEffort,
             safetyIdentifier: this.config.safetyIdentifier,
             signal: controller.signal,
@@ -1567,7 +1627,7 @@ export class CoreWorkflowRunner {
             input: JSON.stringify(context),
             outputSchemaName: 'ReevaluationBatchResult',
             outputSchema: ReevaluationBatchResultSchema,
-            maxOutputTokens: MODEL_MAX_OUTPUT_TOKENS,
+            maxOutputTokens: this.outputTokenBudget('proposal'),
             reasoningEffort: 'medium',
             safetyIdentifier: this.config.safetyIdentifier,
             signal: controller.signal,
@@ -2091,6 +2151,14 @@ function addModelUsage(
     inputTokens: value('inputTokens') + next.inputTokens,
     outputTokens: value('outputTokens') + next.outputTokens,
     totalTokens: value('totalTokens') + next.totalTokens,
+  };
+}
+
+function sumModelUsage(current: ModelUsage, next: ModelUsage): ModelUsage {
+  return {
+    inputTokens: current.inputTokens + next.inputTokens,
+    outputTokens: current.outputTokens + next.outputTokens,
+    totalTokens: current.totalTokens + next.totalTokens,
   };
 }
 

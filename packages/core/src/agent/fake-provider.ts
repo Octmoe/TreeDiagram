@@ -23,6 +23,7 @@ export interface FakeCall {
   input: string;
   model: string;
   reasoningEffort: string;
+  maxOutputTokens: number | undefined;
 }
 
 export class FakeModelProvider implements ModelProvider {
@@ -81,6 +82,7 @@ export class FakeModelProvider implements ModelProvider {
       input: request.input,
       model: request.model,
       reasoningEffort: request.reasoningEffort,
+      maxOutputTokens: request.maxOutputTokens,
     });
     const value =
       this.autoReadiness && request.outputSchemaName === 'WorkflowReadiness'

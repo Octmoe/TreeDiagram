@@ -287,6 +287,7 @@ describe('M3 initialize 工作流（§13.1）', () => {
 
     expect(final.currentStep).toBe('waiting_approval');
     expect(provider.calls).toHaveLength(2);
+    expect(provider.calls.map((call) => call.maxOutputTokens)).toEqual([8_192, 32_768]);
     const revisions = ws.db.repos.node
       .listNodesByProject(ws.project.id)
       .flatMap((node) => ws.db.repos.node.listRevisionsByNode(node.id));
@@ -477,6 +478,64 @@ describe('M3 derive 工作流（§13.2）', () => {
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     });
     expect(completedCalls[1]!.response.text).toContain('trace-child');
+  });
+
+  it('输出因 max_output_tokens 截断时自动扩容一次，并保留失败调用诊断信息', async () => {
+    const ws = makeTestWorkspace();
+    setConsistent(ws);
+    const target = quickNode(ws, { title: '自动扩容目标' });
+    const requestedBudgets: number[] = [];
+    let proposalAttempts = 0;
+    const provider: ModelProvider = {
+      providerName: 'max-output-test',
+      async generateStructured<T>(request: StructuredGenerationRequest) {
+        requestedBudgets.push(request.maxOutputTokens ?? 0);
+        if (request.outputSchemaName === 'WorkflowReadiness') {
+          return {
+            value: readyAssessment('derive') as T,
+            providerResponseId: 'readiness-ok',
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        proposalAttempts += 1;
+        if (proposalAttempts === 1) {
+          throw new DomainError('MODEL_OUTPUT_INVALID', '模型输出在完成结构化 JSON 前被截断', {
+            responseId: 'cut-off-response',
+            reason: 'max_output_tokens',
+            maxOutputTokens: request.maxOutputTokens,
+            usage: { inputTokens: 10, outputTokens: 16_384, totalTokens: 16_394 },
+          });
+        }
+        return {
+          value: proposal([nodeAction('expanded-child')], []) as T,
+          providerResponseId: 'expanded-response',
+          usage: { inputTokens: 10, outputTokens: 2_000, totalTokens: 2_010 },
+        };
+      },
+    };
+    const runner = makeRunner(ws, provider);
+    const run = runner.start(freshProject(ws), deriveRequest(target.node.id));
+    const final = await runner.waitForCompletion(run.id);
+
+    expect(final.status).toBe('succeeded');
+    expect(requestedBudgets).toEqual([8_192, 16_384, 32_768]);
+    expect(final.usage).toEqual({ inputTokens: 21, outputTokens: 18_385, totalTokens: 18_406 });
+    expect(ws.db.repos.node.listNodesByProject(ws.project.id)).toHaveLength(2);
+    const calls = final.checkpoint['modelCalls'] as Array<Record<string, unknown>>;
+    expect(calls).toHaveLength(3);
+    expect(calls[1]).toMatchObject({
+      stage: 'derive',
+      status: 'failed',
+      maxOutputTokens: 16_384,
+      providerResponseId: 'cut-off-response',
+      usage: { inputTokens: 10, outputTokens: 16_384, totalTokens: 16_394 },
+    });
+    expect(calls[2]).toMatchObject({
+      stage: 'derive',
+      status: 'succeeded',
+      maxOutputTokens: 32_768,
+      providerResponseId: 'expanded-response',
+    });
   });
 
   it('单次生成 → 应用 → succeeded；上下文含目标节点', async () => {

@@ -48,6 +48,13 @@ describe('模型配置文件解析', () => {
         baseUrl: 'https://gateway.example.com/v1',
         model: 'my-model',
         timeoutMs: 60000,
+        outputTokens: {
+          readiness: 4096,
+          proposal: 12288,
+          initialize: 32768,
+          repair: 24576,
+          retryCeiling: 65536,
+        },
       }),
     );
     expect(parseModelConfigFile(path)).toEqual({
@@ -56,6 +63,13 @@ describe('模型配置文件解析', () => {
       baseUrl: 'https://gateway.example.com/v1',
       model: 'my-model',
       timeoutMs: 60000,
+      outputTokens: {
+        readiness: 4096,
+        proposal: 12288,
+        initialize: 32768,
+        repair: 24576,
+        retryCeiling: 65536,
+      },
     });
   });
 
@@ -66,6 +80,12 @@ describe('模型配置文件解析', () => {
       /baseUrl 必须是合法 URL/,
     );
     expect(() => parseModelConfigFile(writeConfig('{"timeoutMs":5}'))).toThrowError(/timeoutMs/);
+    expect(() =>
+      parseModelConfigFile(writeConfig('{"outputTokens":{"initialize":1000}}')),
+    ).toThrowError(/outputTokens.initialize/);
+    expect(() =>
+      parseModelConfigFile(writeConfig('{"outputTokens":{"unknown":32000}}')),
+    ).toThrowError(/outputTokens 未知字段 unknown/);
     expect(() => parseModelConfigFile(writeConfig('{"provider":"azure"}'))).toThrowError(
       /provider 仅支持/,
     );
@@ -124,7 +144,28 @@ describe('ServerConfig 合并优先级（文件 > 环境变量 > 默认）', () 
     expect(config.modelApiKey).toBe('sk-file');
     expect(config.modelBaseUrl).toBe('https://gw.example.com/v1');
     expect(config.modelTimeoutMs).toBe(300_000); // 默认值
+    expect(config.modelOutputTokens).toEqual({
+      readiness: 8_192,
+      proposal: 16_384,
+      initialize: 32_768,
+      repair: 32_768,
+      retryCeiling: 65_536,
+    });
     expect(config.modelProvider).toBeNull();
+  });
+
+  it('model.json 可覆盖单个输出预算，但 retryCeiling 必须覆盖所有阶段', () => {
+    const ws = makeWorkspace('{"outputTokens":{"initialize":49152,"retryCeiling":98304}}');
+    expect(loadServerConfig({}, ['--workspace', ws]).modelOutputTokens).toEqual({
+      readiness: 8_192,
+      proposal: 16_384,
+      initialize: 49_152,
+      repair: 32_768,
+      retryCeiling: 98_304,
+    });
+
+    const invalid = makeWorkspace('{"outputTokens":{"initialize":65536,"retryCeiling":32768}}');
+    expect(() => loadServerConfig({}, ['--workspace', invalid])).toThrowError(/retryCeiling/);
   });
 
   it('文件中的 openai/baseUrl 可由环境变量补足 apiKey', () => {

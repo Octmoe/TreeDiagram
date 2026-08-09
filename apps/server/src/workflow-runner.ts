@@ -82,7 +82,12 @@ export function createWorkflowRunner(
   const safetyIdentifier = createHash('sha256').update(workspaceId).digest('hex').slice(0, 32);
   const core = new CoreWorkflowRunner(
     { db, clock },
-    { provider, model: config.model, safetyIdentifier },
+    {
+      provider,
+      model: config.model,
+      safetyIdentifier,
+      ...(config.modelOutputTokens ? { outputTokenBudgets: config.modelOutputTokens } : {}),
+    },
   );
   return { runner: core, core, providerName: provider.providerName };
 }

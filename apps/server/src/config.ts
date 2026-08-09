@@ -1,4 +1,8 @@
 import { loadModelConfigFile } from './model-config.js';
+import {
+  DEFAULT_WORKFLOW_OUTPUT_TOKEN_BUDGETS,
+  type WorkflowOutputTokenBudgets,
+} from '@treediagram/core';
 
 /**
  * 服务配置（IMPLEMENTATION_DESIGN §15.1）。
@@ -14,6 +18,8 @@ export interface ServerConfig {
   /** Agent 工作流模型配置（§15.1）。 */
   model: string;
   modelTimeoutMs: number;
+  /** 结构化输出的阶段预算；model.json 可按字段覆盖默认值。 */
+  modelOutputTokens?: WorkflowOutputTokenBudgets;
   /** 开发用 fake provider 开关；非空时忽略 apiKey。 */
   modelProvider: 'fake' | null;
   /** OpenAI 兼容端点凭证（配置文件 apiKey 或 OPENAI_API_KEY）；null 表示未配置。 */
@@ -109,6 +115,19 @@ export function loadServerConfig(
   const envBaseUrl = env['OPENAI_BASE_URL']?.trim() || null;
   const modelApiKey = modelProvider === 'fake' ? null : (fileConfig?.apiKey ?? envApiKey);
   const modelBaseUrl = modelProvider === 'fake' ? null : (fileConfig?.baseUrl ?? envBaseUrl);
+  const modelOutputTokens: WorkflowOutputTokenBudgets = {
+    ...DEFAULT_WORKFLOW_OUTPUT_TOKEN_BUDGETS,
+    ...(fileConfig?.outputTokens ?? {}),
+  };
+  const largestInitialBudget = Math.max(
+    modelOutputTokens.readiness,
+    modelOutputTokens.proposal,
+    modelOutputTokens.initialize,
+    modelOutputTokens.repair,
+  );
+  if (modelOutputTokens.retryCeiling < largestInitialBudget) {
+    fail('model.json 的 outputTokens.retryCeiling 不得小于任何阶段的初始预算');
+  }
   if (
     modelProvider !== 'fake' &&
     (fileConfig?.provider === 'openai' || modelBaseUrl !== null) &&
@@ -125,6 +144,7 @@ export function loadServerConfig(
     model: fileConfig?.model ?? (env['TREEDIAGRAM_MODEL']?.trim() || DEFAULT_MODEL),
     modelTimeoutMs:
       fileConfig?.timeoutMs ?? parseModelTimeoutMs(env['TREEDIAGRAM_MODEL_TIMEOUT_MS']),
+    modelOutputTokens,
     modelProvider,
     modelApiKey,
     modelBaseUrl,

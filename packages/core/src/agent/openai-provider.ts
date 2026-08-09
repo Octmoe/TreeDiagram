@@ -256,6 +256,7 @@ export class OpenAIProvider implements ModelProvider {
             responseId: response.id,
             reason,
             maxOutputTokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+            usage: toUsage(response.usage),
           });
         }
         const text = response.output_text;
