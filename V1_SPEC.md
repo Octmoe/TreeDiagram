@@ -1,5 +1,8 @@
 # TreeDiagram Agent Harness — V1 设计规格
 
+> **已归档**：本文属于 V1 standalone Agent Harness。权威归档引用为
+> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](./DESIGN_V2.md)。
+
 > 状态：V1 基线  
 > 日期：2026-08-07  
 > 上游共识：[DESIGN.md](./DESIGN.md)  

@@ -1,5 +1,8 @@
 # TreeDiagram V1 — M1–M5 总体实现计划
 
+> **已归档**：本文属于 V1 standalone Agent Harness。权威归档引用为
+> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](./DESIGN_V2.md)。
+
 > 实现细节：[IMPLEMENTATION_DESIGN.md](./IMPLEMENTATION_DESIGN.md)  
 > HTTP 契约：[docs/API_CONTRACT.md](./docs/API_CONTRACT.md)  
 > 产品验收：[V1_SPEC.md](./V1_SPEC.md)  

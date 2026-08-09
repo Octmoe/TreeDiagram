@@ -1,5 +1,8 @@
 # TreeDiagram V1 — 详细实现设计
 
+> **已归档**：本文描述 V1 standalone Agent Harness。权威归档引用为
+> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](./DESIGN_V2.md)。
+
 > 状态：实现基线  
 > 日期：2026-08-07  
 > 产品规格：[V1_SPEC.md](./V1_SPEC.md)  

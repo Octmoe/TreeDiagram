@@ -1,17 +1,25 @@
 # TreeDiagram
 
-TreeDiagram 是一个面向独立创作者的设计 Agent Harness。它以“树形主结构 + 语义关系图”维护长期、可查询、可由 Agent 操作的设计状态，并提供 Initialize、Derive、Grill、Unbox 和 Re-evaluate 工作流。
+> **项目正在进行 V2 架构转型。** 当前方向是“宿主聊天 Harness + TreeDiagram Skill/MCP + 常驻设计树”，
+> 详见 [DESIGN_V2.md](./DESIGN_V2.md)。原 standalone Agent Harness 已完整冻结在
+> `archive/v1-harness-baseline-2026-08-09`，归档说明见 [ARCHIVE.md](./ARCHIVE.md)。
 
-当前阶段：**V1 实现完成**（M1–M5 里程碑全部交付，贯穿验收通过）。
+TreeDiagram V2 是一个面向 AI Agent 协作的持久设计空间。宿主 Harness 负责聊天、推理与工具循环；
+TreeDiagram 负责设计状态、共享注意力、确定性校验、ChangeSet、Release，以及让用户可以直接选择节点
+来指示 Agent 工作的常驻树形界面。
+
+下文记录的命令和界面描述仍对应已归档的 V1 实现，在 V2 迁移期间仅作为运行与迁移参考。
 
 ## 设计文档
 
-- [V1 实现规格](./V1_SPEC.md)：首版范围、领域模型、工作流、架构、接口与验收标准；实现以此为准。
-- [设计探索与决策记录](./DESIGN.md)：产品共识、决策依赖和逐轮推演历史。
-- [详细实现设计](./IMPLEMENTATION_DESIGN.md)：固定技术栈、目录、数据库、领域服务、API、Agent、UI 与测试契约。
-- [HTTP API 精确契约](./docs/API_CONTRACT.md)：逐路由权限、请求、响应、分页、错误与事件载荷。
-- [M1–M5 总体计划](./IMPLEMENTATION_PLAN.md)：里程碑依赖、交付边界和完成定义。
-- [使用手册](./MANUAL.md)：概念速览、五个工作流用法、发布生命周期、AI 托管与下游集成。
+- [V2 整体设计](./DESIGN_V2.md)：当前产品边界、Attention Context、Skill/MCP/UI 架构与迁移策略。
+- [V1 归档说明](./ARCHIVE.md)：归档引用、恢复方式与资产处置。
+- [V1 实现规格](./V1_SPEC.md)：已归档的首版范围、领域模型、工作流、架构与验收标准。
+- [V1 设计探索与决策记录](./DESIGN.md)：已归档的产品共识、决策依赖和逐轮推演历史。
+- [V1 详细实现设计](./IMPLEMENTATION_DESIGN.md)：已归档的技术栈、数据库、API、Agent 与 UI 契约。
+- [V1 HTTP API 契约](./docs/API_CONTRACT.md)：已归档的逐路由权限、请求、响应与错误契约。
+- [V1 M1–M5 计划](./IMPLEMENTATION_PLAN.md)：已归档的里程碑依赖、交付边界和完成定义。
+- [V1 使用手册](./MANUAL.md)：已归档实现的运行、工作流与发布说明。
 
 ## 环境要求
 

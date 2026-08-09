@@ -1,5 +1,8 @@
 # TreeDiagram Agent Harness — 设计规格（持续更新）
 
+> **已归档**：本文属于 V1 standalone Agent Harness。权威归档引用为
+> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](./DESIGN_V2.md)。
+
 > 状态：探索中 — 第 6 轮提问中（B3 收束前）  
 > 最近更新：2026-08-07  
 > 用途：记录已确认决策、暂定假设、待决问题、决策依赖与讨论历史。本文档是后续实现的唯一主设计源；讨论中出现的新设计与问题会持续归档到这里。

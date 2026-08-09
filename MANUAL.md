@@ -1,5 +1,8 @@
 # TreeDiagram 使用手册
 
+> **已归档**：本文描述 V1 standalone Agent Harness。权威归档引用为
+> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](./DESIGN_V2.md)。
+
 面向使用者的完整指南：概念、快速上手、五个 Agent 工作流的用法、发布生命周期、
 AI 托管、下游集成与故障处理。实现细节以 [V1_SPEC](./V1_SPEC.md) 与
 [API 契约](./docs/API_CONTRACT.md) 为准；安装与配置见 [README](./README.md)。

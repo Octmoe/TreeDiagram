@@ -1,5 +1,8 @@
 # TreeDiagram HTTP API 契约
 
+> **已归档**：本文描述 V1 standalone Agent Harness 的 HTTP API。权威归档引用为
+> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](../DESIGN_V2.md)。
+
 本文档是 TreeDiagram V1 HTTP 接口在**字段、权限、分页和错误细节**上的权威定义
 （见 IMPLEMENTATION_DESIGN §0 的文档优先级）。接口形态与状态机语义以
 IMPLEMENTATION_DESIGN §11 为准；schema 的机器可读实现位于
