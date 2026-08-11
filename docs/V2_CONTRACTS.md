@@ -22,10 +22,10 @@
   `design_relations_get`、`design_context_get`、`design_changeset_get`、`design_impact_get`。
 - Attention 工具：`attention_get`、`attention_set`、`attention_pin`、`attention_clear`、
   `attention_agent_focus_set`。
-- 写工具：`changeset_begin`、`design_change_propose`、`design_change_revise`、
-  `design_change_discard`、`changeset_validate`。
+- 写工具：`changeset_begin`、`changeset_lease_handoff_request`、`design_change_propose`、
+  `design_change_revise`、`design_change_discard`、`changeset_validate`。
 - 高权限工具：`changeset_adopt`、`design_release_publish`、`design_root_change_confirm`、
-  `delegation_policy_set`；必须提交未消费、未过期且 digest/version 匹配的 ApprovalGrant token。
+  `delegation_policy_set`、`changeset_lease_takeover`；必须提交未消费、未过期且 digest/version 匹配的 ApprovalGrant token。
 - 错误类别严格为 `agent_recoverable`、`user_input_required`、`state_conflict`、
   `permission_required`、`infrastructure_failure`。Schema 错误必须给出字段 path、expected、actual、
   retryable 与 suggestedAction。
@@ -35,8 +35,7 @@
 - Attention 写入身份为 `workspaceId + hostKind + hostSessionRef + clientRef`，因此各 Sidecar 标签页仍可独立恢复。Agent 读取使用命名共享投影（Codex 为 `codex-agent`，Hermes 为 `hermes-agent`）：在当前 workspace 内选取同一 hostKind 最近更新的命名通道，即使 Agent 与页面的 host session 不同也能读到用户最后标记的焦点；绝不跨 workspace。`primaryNodeId/selectedNodeIds` 表示 Working 节点焦点，`primaryChangeId/selectedChangeIds` 表示候选焦点。更新使用 version CAS；选择只写 Attention 表与高频事件，不触碰设计表、ChangeSet 或模型。
 - `attention_get` 是 Agent 读取用户明确目标的权威入口；`design_context_get` 必须直接返回 `selectedChanges`，不得要求 Agent 从整个 ChangeSet 猜测用户选中了哪一项。
 - 同一 host session 自动读取原 context；新 session 只能列出恢复候选，并在用户明确操作后复制，不能复用 ID。
-- ChangeSetWriteLease 与所有候选写操作在同一 SQLite transaction 内校验；版本或 owner 不符返回
-  `state_conflict`。接管只更换 owner，不删除候选。
+- ChangeSetWriteLease 与所有候选写操作在同一 SQLite transaction 内校验。成功写入续租；两小时未续租、上一次系统启动前遗留或缺失的 lease 标为 `reclaimable`，当前写会话可原子恢复 owner 而不删除 ChangeSet 或候选。仍有效的 `foreign_active` lease 在 owner 不符时返回 `state_conflict`；Agent 只能登记绑定 owner、ChangeSet 版本和用途的短时 handoff request，用户在 Sidecar 明确批准后才会把 lease 转移给请求方。版本或 owner 变化会使请求失效。
 - ApprovalGrant 保存 token hash，不保存明文；绑定 action、target digest、expected version、可选 host session
   与过期时间。消费 Grant 与高权限副作用在同一 transaction；任何目标内容或版本变化都使旧 Grant 失效。
 - Sidecar 是本地可信的人机审批表面：只有明确按钮操作可签发 Grant。MCP Agent 工具不能自行签发 Grant。

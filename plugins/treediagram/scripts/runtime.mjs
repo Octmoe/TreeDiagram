@@ -45,6 +45,14 @@ function isTreeDiagramRuntime(path) {
   return manifest?.name === 'treediagram';
 }
 
+function pluginGeneration(root = pluginRoot) {
+  return (
+    readJson(join(root, '.codex-plugin', 'plugin.json'))?.version ??
+    readJson(join(root, 'package.json'))?.version ??
+    'development'
+  );
+}
+
 function runtimeCandidates(root) {
   const candidates = [
     process.env['TREEDIAGRAM_RUNTIME_ROOT'],
@@ -148,14 +156,18 @@ function initializeWorkspace(projectRoot, runtimeRoot, entries) {
   return meta;
 }
 
-async function health(port, expectedWorkspaceId) {
+async function health(port, expectedWorkspaceId, expectedRuntimeGeneration) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/v2/health`, {
       signal: AbortSignal.timeout(700),
     });
     if (!response.ok) return null;
     const value = await response.json();
-    return value?.ok && value?.workspaceId === expectedWorkspaceId ? value : null;
+    return value?.ok &&
+      value?.workspaceId === expectedWorkspaceId &&
+      (!expectedRuntimeGeneration || value?.runtimeGeneration === expectedRuntimeGeneration)
+      ? value
+      : null;
   } catch {
     return null;
   }
@@ -216,17 +228,17 @@ async function acquireLock(lockPath) {
   throw new Error(`等待 TreeDiagram 项目启动锁超时: ${lockPath}`);
 }
 
-async function startSidecar(projectRoot, runtimeRoot, entries, meta) {
+async function startSidecar(projectRoot, runtimeRoot, entries, meta, runtimeGeneration) {
   const paths = workspacePaths(projectRoot);
   const previous = readSidecar(projectRoot);
-  if (previous && (await health(previous.port, meta.workspaceId))) {
+  if (previous && (await health(previous.port, meta.workspaceId, runtimeGeneration))) {
     return { ...previous, reused: true };
   }
 
   const firstPort = preferredPort(projectRoot);
   for (let offset = 0; offset < 64; offset += 1) {
     const port = PORT_BASE + ((firstPort - PORT_BASE + offset) % PORT_SPAN);
-    if (await health(port, meta.workspaceId)) {
+    if (await health(port, meta.workspaceId, runtimeGeneration)) {
       const recovered = {
         format: SIDECAR_FORMAT,
         workspaceId: meta.workspaceId,
@@ -235,6 +247,7 @@ async function startSidecar(projectRoot, runtimeRoot, entries, meta) {
         url: `http://127.0.0.1:${port}/`,
         pid: null,
         startedAt: new Date().toISOString(),
+        runtimeGeneration,
       };
       atomicWriteJson(paths.sidecarPath, recovered);
       return { ...recovered, reused: true };
@@ -248,6 +261,7 @@ async function startSidecar(projectRoot, runtimeRoot, entries, meta) {
         cwd: runtimeRoot,
         detached: true,
         windowsHide: true,
+        env: { ...process.env, TREEDIAGRAM_RUNTIME_GENERATION: runtimeGeneration },
         stdio: ['ignore', logHandle, logHandle],
       },
     );
@@ -260,7 +274,7 @@ async function startSidecar(projectRoot, runtimeRoot, entries, meta) {
 
     const deadline = Date.now() + START_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (await health(port, meta.workspaceId)) {
+      if (await health(port, meta.workspaceId, runtimeGeneration)) {
         const current = {
           format: SIDECAR_FORMAT,
           workspaceId: meta.workspaceId,
@@ -269,6 +283,7 @@ async function startSidecar(projectRoot, runtimeRoot, entries, meta) {
           url: `http://127.0.0.1:${port}/`,
           pid: child.pid ?? null,
           startedAt: new Date().toISOString(),
+          runtimeGeneration,
         };
         atomicWriteJson(paths.sidecarPath, current);
         return { ...current, reused: false };
@@ -287,6 +302,8 @@ export async function ensureProject(options = {}) {
     ? resolve(options.runtimeRoot)
     : resolveRuntimeRoot(options.pluginRoot ?? pluginRoot);
   const entries = ensureRuntime(runtimeRoot);
+  const runtimeGeneration =
+    options.runtimeGeneration ?? pluginGeneration(options.pluginRoot ?? pluginRoot);
   const paths = workspacePaths(projectRoot);
   mkdirSync(paths.stateDir, { recursive: true });
 
@@ -295,7 +312,7 @@ export async function ensureProject(options = {}) {
   if (
     existingMeta?.workspaceId &&
     existingSidecar &&
-    (await health(existingSidecar.port, existingMeta.workspaceId))
+    (await health(existingSidecar.port, existingMeta.workspaceId, runtimeGeneration))
   ) {
     return {
       projectRoot,
@@ -307,8 +324,22 @@ export async function ensureProject(options = {}) {
 
   await acquireLock(paths.lockPath);
   try {
+    const currentSidecar = existingMeta?.workspaceId ? readSidecar(projectRoot) : null;
+    if (
+      currentSidecar &&
+      (await health(currentSidecar.port, existingMeta.workspaceId)) &&
+      !(await health(currentSidecar.port, existingMeta.workspaceId, runtimeGeneration))
+    ) {
+      await stopSidecar(projectRoot);
+    }
     const workspace = initializeWorkspace(projectRoot, runtimeRoot, entries);
-    const sidecar = await startSidecar(projectRoot, runtimeRoot, entries, workspace);
+    const sidecar = await startSidecar(
+      projectRoot,
+      runtimeRoot,
+      entries,
+      workspace,
+      runtimeGeneration,
+    );
     return { projectRoot, runtimeRoot, workspace, sidecar };
   } finally {
     rmSync(paths.lockPath, { force: true });

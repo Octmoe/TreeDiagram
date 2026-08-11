@@ -55,6 +55,7 @@ export function buildSidecar(store: V2Store): FastifyInstance {
     ok: true,
     version: 2,
     workspaceId: store.meta.workspaceId,
+    runtimeGeneration: process.env['TREEDIAGRAM_RUNTIME_GENERATION'] ?? 'development',
   }));
   app.get('/api/v2/bootstrap', async (request) => {
     const query = request.query as Record<string, unknown>;
@@ -69,6 +70,10 @@ export function buildSidecar(store: V2Store): FastifyInstance {
       /* no active ChangeSet */
     }
     const lease = changeSet ? store.getLease(changeSet.id) : null;
+    const leaseStatus = changeSet ? store.getLeaseStatus(changeSet.id, hostSessionRef) : null;
+    const leaseHandoffRequests = changeSet
+      ? store.listPendingLeaseHandoffRequests(changeSet.id)
+      : [];
     const cursor = Number(
       (
         store.connection
@@ -83,6 +88,8 @@ export function buildSidecar(store: V2Store): FastifyInstance {
       attention: attention.get(identity),
       changeSet,
       lease,
+      leaseStatus,
+      leaseHandoffRequests,
       agentActivity: attention.latestAgentFocus(hostSessionRef),
       recoveryCandidates: attention.get(identity)
         ? []
@@ -122,6 +129,9 @@ export function buildSidecar(store: V2Store): FastifyInstance {
     if (action === 'take_lease') {
       const grant = store.issueApprovalGrant('take_lease', targetId, hostSessionRef);
       return store.takeLease(hostSessionRef, targetId, grant.token);
+    }
+    if (action === 'approve_lease_handoff') {
+      return store.approveLeaseHandoff(hostSessionRef, targetId);
     }
     if (action === 'expand_delegation') {
       const grant = store.issueApprovalGrant(

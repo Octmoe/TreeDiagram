@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, uptime } from 'node:os';
 import { AttentionService } from '@treediagram/attention';
+import { CHANGESET_LEASE_IDLE_TIMEOUT_MS } from '@treediagram/contracts';
 import { DomainError } from '@treediagram/domain';
 import { initializeWorkspace, V2Store } from '@treediagram/storage-sqlite';
 import { ToolService } from '@treediagram/mcp';
@@ -30,6 +31,25 @@ describe('V2 workspace lifecycle', () => {
       expect.objectContaining({ code: 'UNSUPPORTED_WORKSPACE_VERSION' }),
     );
     expect(() => new V2Store(dir)).toThrow(DomainError);
+  });
+
+  it('adds the lease handoff table when opening an earlier V2 workspace', () => {
+    const dir = workspace();
+    const previous = new V2Store(dir);
+    previous.connection.exec('DROP TABLE changeset_lease_handoff_request');
+    previous.close();
+
+    const migrated = new V2Store(dir);
+    try {
+      const table = migrated.connection
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'changeset_lease_handoff_request'",
+        )
+        .get() as { name: string } | undefined;
+      expect(table?.name).toBe('changeset_lease_handoff_request');
+    } finally {
+      migrated.close();
+    }
   });
 
   it('enforces lease, version, target-bound Grant and publishes an immutable release', async () => {
@@ -151,6 +171,157 @@ describe('V2 workspace lifecycle', () => {
       );
       expect(() => store.getChangeSet()).toThrowError(
         expect.objectContaining({ code: 'CHANGESET_NOT_FOUND' }),
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  it('recovers restart-orphaned and idle-expired leases without losing the ChangeSet', () => {
+    const store = new V2Store(workspace());
+    try {
+      let changeSet = store.beginChangeSet('old-session', 'Recoverable design').changeSet;
+      const proposed = store.proposeChange({
+        hostSessionRef: 'old-session',
+        changeSetId: changeSet.id,
+        expectedChangeSetVersion: changeSet.version,
+        operation: 'create_node',
+        payload: {
+          nodeType: 'risk',
+          displayTitle: 'Preserve this candidate',
+          contentText: 'Lease recovery must not discard pending work.',
+          roles: ['finding'],
+          attributes: {},
+          approvalState: 'tentative',
+          epistemicState: 'supported',
+          reviewState: 'clean',
+        },
+        summary: 'Keep pending work during recovery',
+      });
+      changeSet = proposed.changeSet;
+
+      expect(store.getLeaseStatus(changeSet.id, 'new-session').state).toBe('foreign_active');
+      const beforeSystemBoot = new Date(Date.now() - uptime() * 1000 - 2 * 60_000).toISOString();
+      store.connection
+        .prepare('UPDATE changeset_write_lease SET renewed_at = ? WHERE changeset_id = ?')
+        .run(beforeSystemBoot, changeSet.id);
+      expect(store.getLeaseStatus(changeSet.id, 'new-session')).toEqual(
+        expect.objectContaining({
+          state: 'reclaimable',
+          reason: 'previous_system_boot',
+          canReclaim: true,
+        }),
+      );
+
+      const recovered = store.beginChangeSet('new-session', 'Must not replace existing work');
+      expect(recovered).toEqual(
+        expect.objectContaining({
+          recoveredLease: true,
+          recoveryReason: 'previous_system_boot',
+          changeSet: expect.objectContaining({ id: changeSet.id, version: changeSet.version }),
+          lease: expect.objectContaining({ ownerHostSessionRef: 'new-session' }),
+        }),
+      );
+      expect(recovered.changeSet.changes).toEqual([
+        expect.objectContaining({ id: proposed.change.id, status: 'proposed' }),
+      ]);
+
+      const idleExpiredAt = new Date(
+        Date.now() - CHANGESET_LEASE_IDLE_TIMEOUT_MS - 60_000,
+      ).toISOString();
+      store.connection
+        .prepare(
+          'UPDATE changeset_write_lease SET owner_host_session_ref = ?, renewed_at = ? WHERE changeset_id = ?',
+        )
+        .run('idle-session', idleExpiredAt, changeSet.id);
+      expect(store.getLeaseStatus(changeSet.id, 'write-session').state).toBe('reclaimable');
+      const afterRecovery = store.proposeChange({
+        hostSessionRef: 'write-session',
+        changeSetId: changeSet.id,
+        expectedChangeSetVersion: changeSet.version,
+        operation: 'create_node',
+        payload: {
+          nodeType: 'question',
+          displayTitle: 'Continue after recovery',
+          contentText: '',
+          roles: [],
+          attributes: {},
+          approvalState: 'tentative',
+          epistemicState: 'assumed',
+          reviewState: 'clean',
+        },
+        summary: 'Verify direct write recovery',
+      });
+      expect(afterRecovery.changeSet.changes).toHaveLength(2);
+      expect(store.getLease(changeSet.id)).toEqual(
+        expect.objectContaining({ ownerHostSessionRef: 'write-session' }),
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  it('hands an active lease to a requesting Agent only after a fresh Sidecar approval', () => {
+    const store = new V2Store(workspace());
+    try {
+      let changeSet = store.beginChangeSet('sidecar-session', 'Handoff design').changeSet;
+      const request = store.requestLeaseHandoff(
+        'agent-session',
+        changeSet.id,
+        'Submit the selected product-shape candidate and its constraint.',
+      );
+      expect(request).toEqual(
+        expect.objectContaining({
+          requesterHostSessionRef: 'agent-session',
+          ownerHostSessionRef: 'sidecar-session',
+          changeSetVersion: changeSet.version,
+          status: 'pending',
+        }),
+      );
+      expect(store.getLeaseStatus(changeSet.id, 'agent-session').state).toBe('foreign_active');
+      expect(store.listPendingLeaseHandoffRequests(changeSet.id)).toEqual([
+        expect.objectContaining({ id: request.id }),
+      ]);
+
+      const approved = store.approveLeaseHandoff('sidecar-session', request.id);
+      expect(approved.lease.ownerHostSessionRef).toBe('agent-session');
+      expect(approved.request).toEqual(
+        expect.objectContaining({
+          status: 'approved',
+          resolvedByHostSessionRef: 'sidecar-session',
+        }),
+      );
+      expect(store.getLeaseStatus(changeSet.id, 'agent-session').state).toBe('owned');
+      expect(store.listPendingLeaseHandoffRequests(changeSet.id)).toEqual([]);
+
+      const grant = store.issueApprovalGrant('take_lease', changeSet.id, 'sidecar-session');
+      store.takeLease('sidecar-session', changeSet.id, grant.token);
+      const staleRequest = store.requestLeaseHandoff(
+        'agent-session',
+        changeSet.id,
+        'Retry after the owner changed.',
+      );
+      const ownerChange = store.proposeChange({
+        hostSessionRef: 'sidecar-session',
+        changeSetId: changeSet.id,
+        expectedChangeSetVersion: changeSet.version,
+        operation: 'create_node',
+        payload: {
+          nodeType: 'question',
+          displayTitle: 'Change while request waits',
+          contentText: '',
+          roles: [],
+          attributes: {},
+          approvalState: 'tentative',
+          epistemicState: 'assumed',
+          reviewState: 'clean',
+        },
+        summary: 'Invalidate the pending handoff request',
+      });
+      changeSet = ownerChange.changeSet;
+      expect(store.listPendingLeaseHandoffRequests(changeSet.id)).toEqual([]);
+      expect(() => store.approveLeaseHandoff('sidecar-session', staleRequest.id)).toThrowError(
+        expect.objectContaining({ code: 'LEASE_HANDOFF_REQUEST_STALE' }),
       );
     } finally {
       store.close();

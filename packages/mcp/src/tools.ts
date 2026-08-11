@@ -127,8 +127,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'design_changeset_get',
-    description: '读取活动或指定 ChangeSet、候选差异和 lease。',
-    inputSchema: object({ changeSetId: string }),
+    description:
+      '读取活动或指定 ChangeSet、候选差异和 lease；传入当前 hostSessionRef 时会明确区分活跃外部 lease 与可安全恢复的过期 lease。',
+    inputSchema: object({ changeSetId: string, hostSessionRef: string }),
     readOnly: true,
   },
   {
@@ -202,10 +203,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 
   {
     name: 'changeset_begin',
-    description: '创建活动 ChangeSet 并获取当前宿主会话的单写者 lease。',
+    description:
+      '创建活动 ChangeSet 并获取当前宿主会话的单写者 lease；若现有 lease 已过期、属于上次系统启动或缺失，则保留全部候选并原子恢复，仍有效的其他会话 lease 不会被绕过。',
     inputSchema: object({ hostSessionRef: string, title: string, description: string }, [
       'hostSessionRef',
       'title',
+    ]),
+    readOnly: false,
+  },
+  {
+    name: 'changeset_lease_handoff_request',
+    description:
+      '当活动 ChangeSet 由仍有效的其他会话持有时，向 Sidecar 创建短时、版本绑定的写入权交接请求；该请求本身不会转移 lease。',
+    inputSchema: object({ hostSessionRef: string, changeSetId: string, purpose: string }, [
+      'hostSessionRef',
+      'changeSetId',
+      'purpose',
     ]),
     readOnly: false,
   },

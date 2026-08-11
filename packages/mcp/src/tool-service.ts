@@ -103,11 +103,27 @@ export class ToolService {
         case 'design_changeset_get': {
           const changeSet = this.store.getChangeSet(this.optionalString(args, 'changeSetId'));
           const lease = this.store.getLease(changeSet.id);
+          const hostSessionRef = this.optionalString(args, 'hostSessionRef');
+          const leaseStatus = hostSessionRef
+            ? this.store.getLeaseStatus(changeSet.id, hostSessionRef)
+            : null;
           const pending =
             changeSet.changes?.filter((change) => change.status === 'proposed').length ?? 0;
+          const handoffRequests = this.store.listPendingLeaseHandoffRequests(changeSet.id);
+          const currentHandoff = hostSessionRef
+            ? handoffRequests.find((request) => request.requesterHostSessionRef === hostSessionRef)
+            : undefined;
+          const leaseSummary =
+            leaseStatus?.state === 'reclaimable'
+              ? `旧 lease 可安全恢复（${leaseStatus.reason}）；当前会话可调用 changeset_begin 继续原 ChangeSet`
+              : leaseStatus?.state === 'owned'
+                ? '当前会话持有 lease'
+                : currentHandoff
+                  ? `lease 交接请求 ${currentHandoff.id} 正等待 Sidecar 用户确认`
+                  : `lease ${lease?.ownerHostSessionRef ?? '缺失'}`;
           return ok(
-            { changeSet, lease },
-            `${changeSet.title} v${changeSet.version}：${pending} 个待确认候选，lease ${lease?.ownerHostSessionRef ?? '缺失'}。`,
+            { changeSet, lease, leaseStatus, handoffRequests },
+            `${changeSet.title} v${changeSet.version}：${pending} 个待确认候选，${leaseSummary}。`,
           );
         }
         case 'design_impact_get': {
@@ -203,7 +219,20 @@ export class ToolService {
           );
           return ok(
             result,
-            `ChangeSet“${result.changeSet.title}”已就绪，version ${result.changeSet.version}。`,
+            result.recoveredLease
+              ? `已从${result.recoveryReason === 'previous_system_boot' ? '上次系统启动' : '过期会话'}安全恢复 ChangeSet“${result.changeSet.title}”及其全部候选，version ${result.changeSet.version}。`
+              : `ChangeSet“${result.changeSet.title}”已就绪，version ${result.changeSet.version}。`,
+          );
+        }
+        case 'changeset_lease_handoff_request': {
+          const request = this.store.requestLeaseHandoff(
+            this.requiredString(args, 'hostSessionRef'),
+            this.requiredString(args, 'changeSetId'),
+            this.requiredString(args, 'purpose'),
+          );
+          return ok(
+            request,
+            `已向 Sidecar 发起写入权交接请求 ${request.id}；等待用户点击“交给此 Agent”后重新读取 ChangeSet。`,
           );
         }
         case 'design_change_propose': {

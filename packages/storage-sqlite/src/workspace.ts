@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { WORKSPACE_FORMAT, WORKSPACE_VERSION, type WorkspaceMeta } from '@treediagram/contracts';
 import { domainError } from '@treediagram/domain';
-import { V2_SCHEMA } from './schema.js';
+import { V2_LEASE_HANDOFF_SCHEMA, V2_SCHEMA } from './schema.js';
 
 export const STATE_DIR = '.treediagram';
 export const META_FILE = 'workspace.json';
@@ -23,6 +23,7 @@ function ensureCompatibleV2Schema(db: Database.Database): void {
       db.exec(
         "ALTER TABLE attention_context ADD COLUMN selected_change_ids_json TEXT NOT NULL DEFAULT '[]'",
       );
+    db.exec(V2_LEASE_HANDOFF_SCHEMA);
   })();
 }
 

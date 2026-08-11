@@ -173,6 +173,37 @@ export interface ChangeSetWriteLease {
   baseVersion: number;
   acquiredAt: string;
   renewedAt: string;
+  expiresAt: string;
+}
+
+export const CHANGESET_LEASE_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+export const CHANGESET_LEASE_HANDOFF_TIMEOUT_MS = 15 * 60 * 1000;
+export type ChangeSetLeaseState = 'owned' | 'foreign_active' | 'reclaimable';
+export type ChangeSetLeaseRecoveryReason = 'missing' | 'expired' | 'previous_system_boot' | null;
+
+export interface ChangeSetLeaseStatus {
+  state: ChangeSetLeaseState;
+  reason: ChangeSetLeaseRecoveryReason;
+  currentHostSessionRef: string;
+  lease: ChangeSetWriteLease | null;
+  canWrite: boolean;
+  canReclaim: boolean;
+}
+
+export type ChangeSetLeaseHandoffStatus = 'pending' | 'approved' | 'superseded' | 'expired';
+
+export interface ChangeSetLeaseHandoffRequest {
+  id: string;
+  changeSetId: string;
+  requesterHostSessionRef: string;
+  ownerHostSessionRef: string;
+  changeSetVersion: number;
+  purpose: string;
+  status: ChangeSetLeaseHandoffStatus;
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt: string | null;
+  resolvedByHostSessionRef: string | null;
 }
 
 export interface Release {

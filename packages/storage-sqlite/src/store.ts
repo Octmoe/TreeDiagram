@@ -1,21 +1,26 @@
 import type Database from 'better-sqlite3';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type {
-  ApprovalAction,
-  ApprovalGrant,
-  ChangeSet,
-  ChangeSetWriteLease,
-  CreateNodePayload,
-  CreateRelationPayload,
-  DesignChange,
-  NodeDetail,
-  RelationDetail,
-  Release,
-  ReviseNodePayload,
-  ReviseRelationPayload,
-  ValidationResult,
-  WorkspaceMeta,
-  WorkspaceSummary,
+import { uptime } from 'node:os';
+import {
+  CHANGESET_LEASE_HANDOFF_TIMEOUT_MS,
+  type ApprovalAction,
+  type ApprovalGrant,
+  type ChangeSet,
+  type ChangeSetLeaseRecoveryReason,
+  type ChangeSetLeaseHandoffRequest,
+  type ChangeSetLeaseStatus,
+  type ChangeSetWriteLease,
+  type CreateNodePayload,
+  type CreateRelationPayload,
+  type DesignChange,
+  type NodeDetail,
+  type RelationDetail,
+  type Release,
+  type ReviseNodePayload,
+  type ReviseRelationPayload,
+  type ValidationResult,
+  type WorkspaceMeta,
+  type WorkspaceSummary,
 } from '@treediagram/contracts';
 import type { ProposeChangeInput } from '@treediagram/contracts';
 import {
@@ -30,6 +35,7 @@ import {
   mapChangeSet,
   mapGrant,
   mapLease,
+  mapLeaseHandoffRequest,
   mapNode,
   mapRelation,
   mapRelease,
@@ -42,6 +48,8 @@ import {
 type Row = Record<string, unknown>;
 const nowIso = () => new Date().toISOString();
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+const SYSTEM_BOOTED_AT_MS = Date.now() - uptime() * 1000;
+const BOOT_TIME_TOLERANCE_MS = 60_000;
 
 export interface ApprovalTarget {
   digest: string;
@@ -220,32 +228,225 @@ export class V2Store {
     return row ? mapLease(row) : null;
   }
 
+  getLeaseStatus(changeSetId: string, hostSessionRef: string): ChangeSetLeaseStatus {
+    const lease = this.getLease(changeSetId);
+    if (!lease)
+      return {
+        state: 'reclaimable',
+        reason: 'missing',
+        currentHostSessionRef: hostSessionRef,
+        lease: null,
+        canWrite: false,
+        canReclaim: true,
+      };
+    if (lease.ownerHostSessionRef === hostSessionRef)
+      return {
+        state: 'owned',
+        reason: null,
+        currentHostSessionRef: hostSessionRef,
+        lease,
+        canWrite: true,
+        canReclaim: false,
+      };
+    const renewedAtMs = Date.parse(lease.renewedAt);
+    const reason: ChangeSetLeaseRecoveryReason =
+      renewedAtMs < SYSTEM_BOOTED_AT_MS - BOOT_TIME_TOLERANCE_MS
+        ? 'previous_system_boot'
+        : Date.now() >= Date.parse(lease.expiresAt)
+          ? 'expired'
+          : null;
+    return {
+      state: reason ? 'reclaimable' : 'foreign_active',
+      reason,
+      currentHostSessionRef: hostSessionRef,
+      lease,
+      canWrite: false,
+      canReclaim: Boolean(reason),
+    };
+  }
+
+  getLeaseHandoffRequest(requestId: string): ChangeSetLeaseHandoffRequest {
+    const row = this.connection
+      .prepare('SELECT * FROM changeset_lease_handoff_request WHERE id = ?')
+      .get(requestId) as Row | undefined;
+    if (!row)
+      throw domainError(
+        'LEASE_HANDOFF_REQUEST_NOT_FOUND',
+        'agent_recoverable',
+        `未找到 lease 交接请求: ${requestId}`,
+        { retryable: false },
+      );
+    return mapLeaseHandoffRequest(row);
+  }
+
+  listPendingLeaseHandoffRequests(changeSetId: string): ChangeSetLeaseHandoffRequest[] {
+    const changeSet = this.getChangeSet(changeSetId);
+    const lease = this.getLease(changeSetId);
+    if (!lease) return [];
+    return (
+      this.connection
+        .prepare(
+          `SELECT * FROM changeset_lease_handoff_request
+           WHERE changeset_id = ? AND status = 'pending' AND expires_at > ?
+             AND owner_host_session_ref = ? AND changeset_version = ?
+           ORDER BY created_at DESC`,
+        )
+        .all(changeSetId, nowIso(), lease.ownerHostSessionRef, changeSet.version) as Row[]
+    ).map(mapLeaseHandoffRequest);
+  }
+
+  requestLeaseHandoff(
+    requesterHostSessionRef: string,
+    changeSetId: string,
+    purpose: string,
+  ): ChangeSetLeaseHandoffRequest {
+    const normalizedPurpose = purpose.trim();
+    if (!normalizedPurpose || normalizedPurpose.length > 240)
+      throw domainError(
+        'LEASE_HANDOFF_PURPOSE_INVALID',
+        'agent_recoverable',
+        'lease 交接请求必须提供 1 到 240 个字符的用途说明。',
+        { path: '/purpose', retryable: true },
+      );
+    const changeSet = this.getChangeSet(changeSetId);
+    const leaseStatus = this.getLeaseStatus(changeSetId, requesterHostSessionRef);
+    if (leaseStatus.state === 'owned')
+      throw domainError(
+        'LEASE_ALREADY_OWNED',
+        'agent_recoverable',
+        '当前 Agent 会话已经持有写入权，无需请求交接。',
+        { retryable: true, suggestedAction: '重新读取 ChangeSet 版本后继续提案。' },
+      );
+    if (leaseStatus.state === 'reclaimable')
+      throw domainError(
+        'LEASE_RECOVERABLE_WITHOUT_HANDOFF',
+        'agent_recoverable',
+        '旧 lease 已可安全恢复，无需请求用户接管。',
+        { retryable: true, suggestedAction: '调用 changeset_begin 恢复原 ChangeSet。' },
+      );
+    const lease = leaseStatus.lease!;
+    return this.connection.transaction(() => {
+      const now = nowIso();
+      this.connection
+        .prepare(
+          `UPDATE changeset_lease_handoff_request
+           SET status = 'expired', resolved_at = ?
+           WHERE changeset_id = ? AND status = 'pending' AND expires_at <= ?`,
+        )
+        .run(now, changeSetId, now);
+      const existing = this.connection
+        .prepare(
+          `SELECT * FROM changeset_lease_handoff_request
+           WHERE changeset_id = ? AND requester_host_session_ref = ? AND status = 'pending'
+             AND owner_host_session_ref = ? AND changeset_version = ? AND expires_at > ?
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(
+          changeSetId,
+          requesterHostSessionRef,
+          lease.ownerHostSessionRef,
+          changeSet.version,
+          now,
+        ) as Row | undefined;
+      if (existing) {
+        const expiresAt = new Date(Date.now() + CHANGESET_LEASE_HANDOFF_TIMEOUT_MS).toISOString();
+        this.connection
+          .prepare(
+            'UPDATE changeset_lease_handoff_request SET purpose = ?, expires_at = ? WHERE id = ?',
+          )
+          .run(normalizedPurpose, expiresAt, String(existing['id']));
+        return this.getLeaseHandoffRequest(String(existing['id']));
+      }
+      this.connection
+        .prepare(
+          `UPDATE changeset_lease_handoff_request
+           SET status = 'superseded', resolved_at = ?
+           WHERE changeset_id = ? AND status = 'pending'`,
+        )
+        .run(now, changeSetId);
+      const requestId = randomUUID();
+      const expiresAt = new Date(Date.now() + CHANGESET_LEASE_HANDOFF_TIMEOUT_MS).toISOString();
+      this.connection
+        .prepare(
+          `INSERT INTO changeset_lease_handoff_request
+           (id,changeset_id,requester_host_session_ref,owner_host_session_ref,changeset_version,
+            purpose,status,created_at,expires_at,resolved_at,resolved_by_host_session_ref)
+           VALUES (?,?,?,?,?,?,'pending',?,?,NULL,NULL)`,
+        )
+        .run(
+          requestId,
+          changeSetId,
+          requesterHostSessionRef,
+          lease.ownerHostSessionRef,
+          changeSet.version,
+          normalizedPurpose,
+          now,
+          expiresAt,
+        );
+      this.emit('changeset.updated', {
+        changeSetId,
+        action: 'lease_handoff_requested',
+        requestId,
+        requesterHostSessionRef,
+      });
+      return this.getLeaseHandoffRequest(requestId);
+    })();
+  }
+
   beginChangeSet(
     hostSessionRef: string,
     title: string,
     description = '',
-  ): { changeSet: ChangeSet; lease: ChangeSetWriteLease } {
+  ): {
+    changeSet: ChangeSet;
+    lease: ChangeSetWriteLease;
+    recoveredLease: boolean;
+    recoveryReason: ChangeSetLeaseRecoveryReason;
+  } {
     return this.connection.transaction(() => {
       const active = this.connection
         .prepare("SELECT id FROM change_set WHERE status IN ('open','ready') LIMIT 1")
         .get() as { id: string } | undefined;
       if (active) {
         const existing = this.getChangeSet(active.id);
-        const lease = this.getLease(active.id);
-        if (!lease || lease.ownerHostSessionRef !== hostSessionRef) {
+        const leaseStatus = this.getLeaseStatus(active.id, hostSessionRef);
+        if (leaseStatus.state === 'foreign_active') {
           throw domainError(
             'CHANGESET_WRITE_LOCKED',
             'state_conflict',
-            `活动 ChangeSet 由另一个宿主会话持有: ${lease?.ownerHostSessionRef ?? 'unknown'}`,
+            `活动 ChangeSet 由另一个宿主会话持有: ${leaseStatus.lease?.ownerHostSessionRef ?? 'unknown'}`,
             {
-              actual: lease?.ownerHostSessionRef,
+              actual: leaseStatus.lease?.ownerHostSessionRef,
               expected: hostSessionRef,
               retryable: false,
-              suggestedAction: '请用户在 Sidecar 中显式接管写入权，或继续只读分析。',
+              suggestedAction:
+                '调用 changeset_lease_handoff_request 登记请求，等待用户在 Sidecar 点击“交给此 Agent”。',
             },
           );
         }
-        return { changeSet: existing, lease };
+        if (leaseStatus.state === 'reclaimable') {
+          const lease = this.recoverLease(active.id, hostSessionRef, existing.version, leaseStatus);
+          this.emit('changeset.updated', {
+            changeSetId: active.id,
+            action: 'lease_recovered',
+            hostSessionRef,
+            previousOwnerHostSessionRef: leaseStatus.lease?.ownerHostSessionRef ?? null,
+            reason: leaseStatus.reason,
+          });
+          return {
+            changeSet: existing,
+            lease,
+            recoveredLease: true,
+            recoveryReason: leaseStatus.reason,
+          };
+        }
+        this.renewLease(active.id, existing.version);
+        return {
+          changeSet: existing,
+          lease: this.getLease(active.id)!,
+          recoveredLease: false,
+          recoveryReason: null,
+        };
       }
       const id = randomUUID();
       const now = nowIso();
@@ -261,7 +462,12 @@ export class V2Store {
         )
         .run(id, hostSessionRef, now, now);
       this.emit('changeset.updated', { changeSetId: id, action: 'begun', hostSessionRef });
-      return { changeSet: this.getChangeSet(id), lease: this.getLease(id)! };
+      return {
+        changeSet: this.getChangeSet(id),
+        lease: this.getLease(id)!,
+        recoveredLease: false,
+        recoveryReason: null,
+      };
     })();
   }
 
@@ -837,18 +1043,102 @@ export class V2Store {
     return this.connection.transaction(() => {
       const target = this.getApprovalTarget('take_lease', changeSetId);
       this.consumeGrant('take_lease', approvalToken, target, hostSessionRef, false);
+      const lease = this.claimLease(changeSetId, hostSessionRef, target.version);
       const now = nowIso();
       this.connection
         .prepare(
-          `INSERT INTO changeset_write_lease
-        (changeset_id,owner_host_session_ref,base_version,acquired_at,renewed_at) VALUES (?,?,?,?,?)
-        ON CONFLICT(changeset_id) DO UPDATE SET owner_host_session_ref=excluded.owner_host_session_ref,
-          base_version=excluded.base_version, acquired_at=excluded.acquired_at, renewed_at=excluded.renewed_at`,
+          `UPDATE changeset_lease_handoff_request
+           SET status = 'superseded', resolved_at = ?, resolved_by_host_session_ref = ?
+           WHERE changeset_id = ? AND status = 'pending'`,
         )
-        .run(changeSetId, hostSessionRef, target.version, now, now);
+        .run(now, hostSessionRef, changeSetId);
       this.emit('changeset.updated', { changeSetId, action: 'lease_taken', hostSessionRef });
-      return this.getLease(changeSetId)!;
+      return lease;
     })();
+  }
+
+  approveLeaseHandoff(
+    approvingHostSessionRef: string,
+    requestId: string,
+  ): { request: ChangeSetLeaseHandoffRequest; lease: ChangeSetWriteLease } {
+    const request = this.getLeaseHandoffRequest(requestId);
+    if (request.status !== 'pending')
+      throw domainError(
+        'LEASE_HANDOFF_REQUEST_RESOLVED',
+        'state_conflict',
+        '该 lease 交接请求已经处理。',
+        { actual: request.status, retryable: false },
+      );
+    if (request.expiresAt <= nowIso()) {
+      this.connection
+        .prepare(
+          `UPDATE changeset_lease_handoff_request
+           SET status = 'expired', resolved_at = ?, resolved_by_host_session_ref = ? WHERE id = ?`,
+        )
+        .run(nowIso(), approvingHostSessionRef, requestId);
+      throw domainError(
+        'LEASE_HANDOFF_REQUEST_EXPIRED',
+        'state_conflict',
+        '该 lease 交接请求已过期。',
+        { retryable: false, suggestedAction: '请 Agent 重新读取 ChangeSet 并发起新请求。' },
+      );
+    }
+    const changeSet = this.getChangeSet(request.changeSetId);
+    const lease = this.getLease(request.changeSetId);
+    if (
+      !lease ||
+      lease.ownerHostSessionRef !== request.ownerHostSessionRef ||
+      changeSet.version !== request.changeSetVersion
+    ) {
+      this.connection
+        .prepare(
+          `UPDATE changeset_lease_handoff_request
+           SET status = 'superseded', resolved_at = ?, resolved_by_host_session_ref = ? WHERE id = ?`,
+        )
+        .run(nowIso(), approvingHostSessionRef, requestId);
+      throw domainError(
+        'LEASE_HANDOFF_REQUEST_STALE',
+        'state_conflict',
+        'ChangeSet owner 或版本已变化，旧交接请求失效。',
+        {
+          expected: {
+            ownerHostSessionRef: request.ownerHostSessionRef,
+            version: request.changeSetVersion,
+          },
+          actual: {
+            ownerHostSessionRef: lease?.ownerHostSessionRef ?? null,
+            version: changeSet.version,
+          },
+          retryable: false,
+          suggestedAction: '请 Agent 重新读取 ChangeSet 并发起新请求。',
+        },
+      );
+    }
+    const grant = this.issueApprovalGrant(
+      'take_lease',
+      request.changeSetId,
+      request.requesterHostSessionRef,
+    );
+    const transferredLease = this.takeLease(
+      request.requesterHostSessionRef,
+      request.changeSetId,
+      grant.token,
+    );
+    const resolvedAt = nowIso();
+    this.connection
+      .prepare(
+        `UPDATE changeset_lease_handoff_request
+         SET status = 'approved', resolved_at = ?, resolved_by_host_session_ref = ? WHERE id = ?`,
+      )
+      .run(resolvedAt, approvingHostSessionRef, requestId);
+    this.emit('changeset.updated', {
+      changeSetId: request.changeSetId,
+      action: 'lease_handoff_approved',
+      requestId,
+      requesterHostSessionRef: request.requesterHostSessionRef,
+      approvingHostSessionRef,
+    });
+    return { request: this.getLeaseHandoffRequest(requestId), lease: transferredLease };
   }
 
   setDelegationPolicy(
@@ -958,19 +1248,30 @@ export class V2Store {
           suggestedAction: '刷新 ChangeSet，重新判断候选后重试。',
         },
       );
-    const lease = this.getLease(changeSetId);
-    if (!lease || lease.ownerHostSessionRef !== hostSessionRef)
+    const leaseStatus = this.getLeaseStatus(changeSetId, hostSessionRef);
+    if (leaseStatus.state === 'reclaimable') {
+      this.recoverLease(changeSetId, hostSessionRef, changeSet.version, leaseStatus);
+      this.emit('changeset.updated', {
+        changeSetId,
+        action: 'lease_recovered',
+        hostSessionRef,
+        previousOwnerHostSessionRef: leaseStatus.lease?.ownerHostSessionRef ?? null,
+        reason: leaseStatus.reason,
+      });
+    } else if (leaseStatus.state === 'foreign_active') {
       throw domainError(
         'CHANGESET_WRITE_LOCKED',
         'state_conflict',
         '当前宿主会话不持有写入 lease。',
         {
-          expected: lease?.ownerHostSessionRef,
+          expected: leaseStatus.lease?.ownerHostSessionRef,
           actual: hostSessionRef,
           retryable: false,
-          suggestedAction: '请用户在 Sidecar 显式接管写入权。',
+          suggestedAction:
+            '调用 changeset_lease_handoff_request 登记请求，等待用户在 Sidecar 点击“交给此 Agent”。',
         },
       );
+    }
     return changeSet;
   }
 
@@ -1093,6 +1394,76 @@ export class V2Store {
         'UPDATE changeset_write_lease SET base_version = (SELECT version FROM change_set WHERE id = ?), renewed_at = ? WHERE changeset_id = ?',
       )
       .run(changeSetId, now, changeSetId);
+  }
+
+  private claimLease(
+    changeSetId: string,
+    hostSessionRef: string,
+    baseVersion: number,
+  ): ChangeSetWriteLease {
+    const now = nowIso();
+    this.connection
+      .prepare(
+        `INSERT INTO changeset_write_lease
+        (changeset_id,owner_host_session_ref,base_version,acquired_at,renewed_at) VALUES (?,?,?,?,?)
+        ON CONFLICT(changeset_id) DO UPDATE SET owner_host_session_ref=excluded.owner_host_session_ref,
+          base_version=excluded.base_version, acquired_at=excluded.acquired_at, renewed_at=excluded.renewed_at`,
+      )
+      .run(changeSetId, hostSessionRef, baseVersion, now, now);
+    return this.getLease(changeSetId)!;
+  }
+
+  private recoverLease(
+    changeSetId: string,
+    hostSessionRef: string,
+    baseVersion: number,
+    staleStatus: ChangeSetLeaseStatus,
+  ): ChangeSetWriteLease {
+    const now = nowIso();
+    const updated = staleStatus.lease
+      ? this.connection
+          .prepare(
+            `UPDATE changeset_write_lease
+             SET owner_host_session_ref = ?, base_version = ?, acquired_at = ?, renewed_at = ?
+             WHERE changeset_id = ? AND owner_host_session_ref = ? AND renewed_at = ?`,
+          )
+          .run(
+            hostSessionRef,
+            baseVersion,
+            now,
+            now,
+            changeSetId,
+            staleStatus.lease.ownerHostSessionRef,
+            staleStatus.lease.renewedAt,
+          ).changes
+      : this.connection
+          .prepare(
+            `INSERT OR IGNORE INTO changeset_write_lease
+             (changeset_id,owner_host_session_ref,base_version,acquired_at,renewed_at)
+             VALUES (?,?,?,?,?)`,
+          )
+          .run(changeSetId, hostSessionRef, baseVersion, now, now).changes;
+    const lease = this.getLease(changeSetId);
+    if (updated === 1 && lease?.ownerHostSessionRef === hostSessionRef) return lease;
+    throw domainError(
+      'CHANGESET_WRITE_LOCKED',
+      'state_conflict',
+      'lease 在恢复期间已由其他会话更新。',
+      {
+        expected: lease?.ownerHostSessionRef,
+        actual: hostSessionRef,
+        retryable: true,
+        suggestedAction: '重新读取 design_changeset_get；只有 reclaimable lease 可以自动恢复。',
+      },
+    );
+  }
+
+  private renewLease(changeSetId: string, baseVersion: number): void {
+    this.connection
+      .prepare(
+        'UPDATE changeset_write_lease SET base_version = ?, renewed_at = ? WHERE changeset_id = ?',
+      )
+      .run(baseVersion, nowIso(), changeSetId);
   }
 
   private consumeGrant(

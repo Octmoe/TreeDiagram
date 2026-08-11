@@ -1,3 +1,21 @@
+export const V2_LEASE_HANDOFF_SCHEMA = `
+CREATE TABLE IF NOT EXISTS changeset_lease_handoff_request (
+  id TEXT PRIMARY KEY,
+  changeset_id TEXT NOT NULL REFERENCES change_set(id) ON DELETE CASCADE,
+  requester_host_session_ref TEXT NOT NULL,
+  owner_host_session_ref TEXT NOT NULL,
+  changeset_version INTEGER NOT NULL,
+  purpose TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','approved','superseded','expired')),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  resolved_at TEXT,
+  resolved_by_host_session_ref TEXT
+);
+CREATE INDEX IF NOT EXISTS lease_handoff_pending_idx
+  ON changeset_lease_handoff_request(changeset_id, status, created_at DESC);
+`;
+
 export const V2_SCHEMA = `
 PRAGMA foreign_keys = ON;
 
@@ -101,6 +119,8 @@ CREATE TABLE changeset_write_lease (
   acquired_at TEXT NOT NULL,
   renewed_at TEXT NOT NULL
 );
+
+${V2_LEASE_HANDOFF_SCHEMA}
 
 CREATE TABLE release (
   id TEXT PRIMARY KEY,

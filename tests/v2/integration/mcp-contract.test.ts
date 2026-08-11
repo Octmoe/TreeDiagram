@@ -49,6 +49,49 @@ describe('MCP and Sidecar transports', () => {
         data: { changeSet: { id: string; version: number } };
       };
       expect(startedContent.ok).toBe(true);
+      const leaseState = await client.callTool({
+        name: 'design_changeset_get',
+        arguments: { hostSessionRef: 'schema-test' },
+      });
+      expect(leaseState.structuredContent).toEqual(
+        expect.objectContaining({
+          ok: true,
+          data: expect.objectContaining({
+            lease: expect.objectContaining({ expiresAt: expect.any(String) }),
+            leaseStatus: expect.objectContaining({ state: 'owned', canWrite: true }),
+          }),
+        }),
+      );
+      const handoff = await client.callTool({
+        name: 'changeset_lease_handoff_request',
+        arguments: {
+          hostSessionRef: 'requesting-agent',
+          changeSetId: startedContent.data.changeSet.id,
+          purpose: 'Continue the requested MCP design proposal.',
+        },
+      });
+      expect(handoff.structuredContent).toEqual(
+        expect.objectContaining({
+          ok: true,
+          data: expect.objectContaining({
+            requesterHostSessionRef: 'requesting-agent',
+            status: 'pending',
+          }),
+        }),
+      );
+      const waitingLeaseState = await client.callTool({
+        name: 'design_changeset_get',
+        arguments: { hostSessionRef: 'requesting-agent' },
+      });
+      expect(waitingLeaseState.structuredContent).toEqual(
+        expect.objectContaining({
+          ok: true,
+          data: expect.objectContaining({
+            leaseStatus: expect.objectContaining({ state: 'foreign_active' }),
+            handoffRequests: [expect.objectContaining({ status: 'pending' })],
+          }),
+        }),
+      );
       const proposed = await client.callTool({
         name: 'design_change_propose',
         arguments: {
@@ -81,7 +124,13 @@ describe('MCP and Sidecar transports', () => {
     try {
       const health = await app.inject({ method: 'GET', url: '/api/v2/health' });
       expect(health.statusCode).toBe(200);
-      expect(health.json()).toEqual(expect.objectContaining({ ok: true, version: 2 }));
+      expect(health.json()).toEqual(
+        expect.objectContaining({
+          ok: true,
+          version: 2,
+          runtimeGeneration: expect.any(String),
+        }),
+      );
 
       const attention = await app.inject({
         method: 'POST',

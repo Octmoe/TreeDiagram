@@ -1,11 +1,13 @@
-import type {
-  ApprovalGrant,
-  ChangeSet,
-  ChangeSetWriteLease,
-  DesignChange,
-  NodeDetail,
-  RelationDetail,
-  Release,
+import {
+  CHANGESET_LEASE_IDLE_TIMEOUT_MS,
+  type ApprovalGrant,
+  type ChangeSet,
+  type ChangeSetLeaseHandoffRequest,
+  type ChangeSetWriteLease,
+  type DesignChange,
+  type NodeDetail,
+  type RelationDetail,
+  type Release,
 } from '@treediagram/contracts';
 
 type Row = Record<string, unknown>;
@@ -96,12 +98,30 @@ export const mapChangeSet = (row: Row, changes?: DesignChange[]): ChangeSet => {
   return result;
 };
 
-export const mapLease = (row: Row): ChangeSetWriteLease => ({
+export const mapLease = (row: Row): ChangeSetWriteLease => {
+  const renewedAt = text(row, 'renewed_at');
+  return {
+    changeSetId: text(row, 'changeset_id'),
+    ownerHostSessionRef: text(row, 'owner_host_session_ref'),
+    baseVersion: Number(row['base_version']),
+    acquiredAt: text(row, 'acquired_at'),
+    renewedAt,
+    expiresAt: new Date(Date.parse(renewedAt) + CHANGESET_LEASE_IDLE_TIMEOUT_MS).toISOString(),
+  };
+};
+
+export const mapLeaseHandoffRequest = (row: Row): ChangeSetLeaseHandoffRequest => ({
+  id: text(row, 'id'),
   changeSetId: text(row, 'changeset_id'),
+  requesterHostSessionRef: text(row, 'requester_host_session_ref'),
   ownerHostSessionRef: text(row, 'owner_host_session_ref'),
-  baseVersion: Number(row['base_version']),
-  acquiredAt: text(row, 'acquired_at'),
-  renewedAt: text(row, 'renewed_at'),
+  changeSetVersion: Number(row['changeset_version']),
+  purpose: text(row, 'purpose'),
+  status: text(row, 'status') as ChangeSetLeaseHandoffRequest['status'],
+  createdAt: text(row, 'created_at'),
+  expiresAt: text(row, 'expires_at'),
+  resolvedAt: nullable(row, 'resolved_at'),
+  resolvedByHostSessionRef: nullable(row, 'resolved_by_host_session_ref'),
 });
 
 export const mapGrant = (row: Row): ApprovalGrant => ({
