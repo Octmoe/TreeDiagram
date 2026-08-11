@@ -1691,6 +1691,7 @@ export function TreeDiagramApp({
     mode: 'close' | 'clear';
     archivePath?: string;
   } | null>(null);
+  const lifecycle = data?.lifecycle ?? ({ available: false } as const);
   const activeChangeId = previewedChangeId ?? inspectedChangeId;
 
   useEffect(() => {
@@ -1808,7 +1809,7 @@ export function TreeDiagramApp({
   };
 
   const submitLifecycle = async () => {
-    if (!data || !data.lifecycle.available || !lifecycleDialog) return;
+    if (!data || !lifecycle.available || !lifecycleDialog) return;
     setLifecycleBusy(true);
     setError(null);
     try {
@@ -1938,13 +1939,13 @@ export function TreeDiagramApp({
               type="button"
               aria-label="工作区操作"
               aria-expanded={workspaceMenuOpen}
-              title={data.lifecycle.available ? '工作区操作' : '当前运行方式不支持关闭工作区'}
-              disabled={!data.lifecycle.available}
+              title={lifecycle.available ? '工作区操作' : '重启 Sidecar 后可使用工作区操作'}
+              disabled={!lifecycle.available}
               onClick={() => setWorkspaceMenuOpen((current) => !current)}
             >
               ⋯
             </button>
-            {workspaceMenuOpen && data.lifecycle.available ? (
+            {workspaceMenuOpen && lifecycle.available ? (
               <div className="workspace-menu" role="menu">
                 <button
                   type="button"
@@ -2050,7 +2051,7 @@ export function TreeDiagramApp({
           <strong>{notice}</strong>
         </div>
       ) : null}
-      {lifecycleDialog && data.lifecycle.available ? (
+      {lifecycleDialog && lifecycle.available ? (
         <div className="modal-backdrop" role="presentation">
           <section
             className={`lifecycle-dialog ${lifecycleDialog === 'clear' ? 'destructive' : ''}`}
@@ -2083,7 +2084,7 @@ export function TreeDiagramApp({
                 </p>
                 <div className="lifecycle-fact">
                   <span>保留位置</span>
-                  <code>{data.lifecycle.projectRoot}</code>
+                  <code>{lifecycle.projectRoot}</code>
                 </div>
               </>
             ) : (
@@ -2094,17 +2095,17 @@ export function TreeDiagramApp({
                 </p>
                 <div className="archive-preview">
                   <span>将留下的归档文件夹</span>
-                  <code>{data.lifecycle.archivePath}</code>
+                  <code>{lifecycle.archivePath}</code>
                 </div>
                 <label className="confirmation-field">
                   <span>
-                    输入项目名称 <b>{data.lifecycle.confirmationText}</b> 以确认
+                    输入项目名称 <b>{lifecycle.confirmationText}</b> 以确认
                   </span>
                   <input
                     autoFocus
                     value={confirmationText}
                     onChange={(event) => setConfirmationText(event.target.value)}
-                    placeholder={data.lifecycle.confirmationText}
+                    placeholder={lifecycle.confirmationText}
                   />
                 </label>
               </>
@@ -2123,8 +2124,7 @@ export function TreeDiagramApp({
                 type="button"
                 disabled={
                   lifecycleBusy ||
-                  (lifecycleDialog === 'clear' &&
-                    confirmationText !== data.lifecycle.confirmationText)
+                  (lifecycleDialog === 'clear' && confirmationText !== lifecycle.confirmationText)
                 }
                 onClick={() => void submitLifecycle()}
               >

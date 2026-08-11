@@ -365,3 +365,19 @@ test('Sidecar supports a persistent light theme', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(page.getByRole('button', { name: '切换到深色主题' })).toBeVisible();
 });
+
+test('new UI remains usable while an older Sidecar response lacks lifecycle metadata', async ({
+  page,
+}) => {
+  await page.route('**/api/v2/bootstrap?**', async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    delete body['lifecycle'];
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto('/?host=codex&session=e2e-rolling-update');
+  await expect(page.getByRole('heading', { name: '设计树' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '工作区操作' })).toBeDisabled();
+  await expect(page.locator('#root')).not.toBeEmpty();
+});

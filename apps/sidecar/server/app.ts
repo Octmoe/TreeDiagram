@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { readFile } from 'node:fs/promises';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AttentionService } from '@treediagram/attention';
@@ -24,6 +24,30 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.woff2': 'font/woff2',
 };
+
+interface CachedWebAsset {
+  content: Buffer;
+  mimeType: string;
+}
+
+function snapshotWebAssets(root: string): Map<string, CachedWebAsset> {
+  const assets = new Map<string, CachedWebAsset>();
+  if (!existsSync(root)) return assets;
+  const pending = [root];
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile())
+        assets.set(path, {
+          content: readFileSync(path),
+          mimeType: MIME[extname(path)] ?? 'application/octet-stream',
+        });
+    }
+  }
+  return assets;
+}
 
 export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions): FastifyInstance {
   const app = Fastify({
@@ -230,6 +254,9 @@ export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions
   );
 
   const webRoot = resolve(fileURLToPath(new URL('../../dist-web', import.meta.url)));
+  // A running Sidecar must serve the frontend built for its own in-memory backend. Source/plugin
+  // updates may replace dist-web before this process is restarted, so snapshot the small bundle.
+  const webAssets = snapshotWebAssets(webRoot);
   app.get('/*', async (request, reply) => {
     let requestPath = decodeURIComponent((request.params as { '*': string })['*'] || 'index.html');
     if (!requestPath || requestPath.endsWith('/')) requestPath += 'index.html';
@@ -240,9 +267,12 @@ export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions
       !targetRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
       !isAbsolute(targetRelativePath);
     const file =
-      isInsideWebRoot && existsSync(target) && statSync(target).isFile()
+      isInsideWebRoot &&
+      (webAssets.has(target) || (existsSync(target) && statSync(target).isFile()))
         ? target
         : join(webRoot, 'index.html');
+    const cached = webAssets.get(file);
+    if (cached) return reply.type(cached.mimeType).send(cached.content);
     return reply.type(MIME[extname(file)] ?? 'application/octet-stream').send(await readFile(file));
   });
 

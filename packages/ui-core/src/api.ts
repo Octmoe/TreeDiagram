@@ -13,7 +13,7 @@ import type {
 
 export interface BootstrapData {
   workspace: WorkspaceSummary;
-  lifecycle:
+  lifecycle?:
     | {
         available: true;
         projectRoot: string;
