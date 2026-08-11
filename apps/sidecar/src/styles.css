@@ -158,11 +158,20 @@ select:focus-visible {
   background: var(--blue);
 }
 .top-actions {
-  min-width: 250px;
+  min-width: 340px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+.whole-tree-action {
+  border-color: #c7f36b55;
+  color: var(--lime);
+  white-space: nowrap;
+}
+.whole-tree-action:hover:not(:disabled) {
+  background: #c7f36b12;
+  border-color: #c7f36b99;
 }
 .session-chip {
   max-width: 180px;
@@ -1092,12 +1101,64 @@ select:focus-visible {
 .lease-card.foreign {
   border-color: #eeb65b44;
 }
+.lease-card.recoverable {
+  border-color: #74d6c255;
+  background: #74d6c20a;
+}
+.lease-handoff-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0 11px 9px;
+  padding: 10px;
+  border: 1px solid #70b7ff55;
+  border-radius: 9px;
+  background: #70b7ff0c;
+}
+.lease-handoff-icon {
+  color: var(--blue);
+  font-size: 18px;
+}
+.lease-handoff-card div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.lease-handoff-card strong {
+  font-size: 11px;
+}
+.lease-handoff-card p,
+.lease-handoff-card small {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+.lease-handoff-card small {
+  white-space: nowrap;
+}
+.lease-handoff-card button {
+  padding: 6px 8px;
+  border: 1px solid #70b7ff66;
+  border-radius: 6px;
+  background: #70b7ff14;
+  color: var(--blue);
+  font-size: 9px;
+  white-space: nowrap;
+  cursor: pointer;
+}
 .lease-icon {
   color: var(--green);
   font-size: 9px;
 }
 .lease-card.foreign .lease-icon {
   color: var(--amber);
+}
+.lease-card.recoverable .lease-icon {
+  color: var(--cyan);
 }
 .lease-card div {
   flex: 1;
@@ -1924,6 +1985,9 @@ body {
   .top-actions {
     min-width: 0;
     margin-left: auto;
+  }
+  .whole-tree-action {
+    padding-inline: 8px;
   }
   .focus-bar {
     grid-template-columns: 1fr 52px 52px;

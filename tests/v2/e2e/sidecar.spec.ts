@@ -20,12 +20,29 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   const deriveAction = page.getByRole('button', { name: /Derive 推导/ });
   const grillAction = page.getByRole('button', { name: /Grill 追问/ });
   const checkAction = page.getByRole('button', { name: /Check 审查/ });
+  const refactorAction = page.getByRole('button', { name: /Refactor 拆分/ });
   const reevaluateAction = page.getByRole('button', { name: /Reevaluate 影响/ });
+  const wholeTreeRefactorAction = page.getByRole('button', { name: 'AI 整树拆分' });
   await expect(deriveAction).toHaveAttribute('title', '沿当前焦点继续形成小而可审阅的候选');
   await expect(grillAction).toHaveAttribute('title', '分轮追问隐藏决定，在达成共识前不改设计');
   await expect(checkAction).toHaveAttribute('title', '一次性审查假设、矛盾、证据缺口与风险');
+  await expect(refactorAction).toHaveAttribute('title', '拆开复合节点，并对投影后的整树做交叉复核');
   await expect(reevaluateAction).toHaveAttribute('title', '在变更后重新检查影响范围并提出定向修复');
+  await expect(wholeTreeRefactorAction).toHaveAttribute(
+    'title',
+    '扫描整棵设计树，由 AI 拆分所有高置信复合节点并持续交叉复核',
+  );
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await wholeTreeRefactorAction.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('$treediagram-refactor');
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('不要把当前焦点当作范围边界');
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('不要在源节点批次之间等待');
   await grillAction.click();
   await expect(page.getByText('已复制宿主聊天提示')).toBeVisible();
   await expect
@@ -41,6 +58,13 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain('不要修改设计');
+  await refactorAction.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('$treediagram-refactor');
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('整棵设计树执行重复、矛盾、依赖和关系归属的交叉复核');
   const workingAttentionResponse = await request.post('/api/v2/tools/attention_get', {
     data: {
       hostKind: 'codex',
@@ -73,6 +97,30 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
     '/api/v2/bootstrap?hostKind=codex&hostSessionRef=e2e-main&clientRef=e2e-api',
   );
   const state = await bootstrap.json();
+  const handoffRequestResponse = await request.post(
+    '/api/v2/tools/changeset_lease_handoff_request',
+    {
+      data: {
+        hostSessionRef: 'e2e-requesting-agent',
+        changeSetId: state.changeSet.id,
+        purpose: '提交当前焦点的产品形态候选和辅助窗口子约束',
+      },
+    },
+  );
+  expect(handoffRequestResponse.ok()).toBeTruthy();
+  await expect(page.getByText('Agent 请求写入权')).toBeVisible();
+  await expect(page.getByText('提交当前焦点的产品形态候选和辅助窗口子约束')).toBeVisible();
+  await page.getByRole('button', { name: '交给此 Agent' }).click();
+  await expect(page.getByText('写入权已交给请求中的 Agent')).toBeVisible();
+  const agentBootstrap = await request.get(
+    '/api/v2/bootstrap?hostKind=codex&hostSessionRef=e2e-requesting-agent&clientRef=codex-agent',
+  );
+  expect((await agentBootstrap.json()).leaseStatus).toEqual(
+    expect.objectContaining({ state: 'owned', canWrite: true }),
+  );
+  await expect(page.getByText('其他会话持有写入权')).toBeVisible();
+  await page.getByRole('button', { name: '显式接管' }).click();
+  await expect(page.getByText('当前会话持有写入权')).toBeVisible();
   const proposed = await request.post('/api/v2/tools/design_change_propose', {
     data: {
       hostSessionRef: 'e2e-main',

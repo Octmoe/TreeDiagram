@@ -23,6 +23,6 @@ Produce alternatives that change different axes, not cosmetic variants. Include 
 - `risk` and `validation_method` nodes for cheap tests;
 - `derived_from`, `contradicts`, `constrains`, `selects`, or `rejects` relations with explicit rationale.
 
-If the user wants durable changes, use the existing owned ChangeSet or begin one and propose a small batch. Never revise accepted nodes merely to hide the previous rationale. Finish by stating which assumption was opened and set agent focus to `idle` with `complete: true`.
+If the user wants durable changes, read `design_changeset_get` with the current `hostSessionRef`. Use an `owned` ChangeSet or recover one explicitly marked `reclaimable` with `changeset_begin`. For `foreign_active`, call `changeset_lease_handoff_request` with the reframing purpose, tell the user to click “交给此 Agent” in Sidecar, and stop writing; after confirmation, re-read and proceed only when `owned`. Then propose a small batch. Never revise accepted nodes merely to hide the previous rationale. Finish by stating which assumption was opened and set agent focus to `idle` with `complete: true`.
 
-All candidates require user review. Never translate conversational enthusiasm into adoption, root confirmation, publish, delegation, or lease takeover; only a Sidecar or detected host UI user gesture can issue the needed grant.
+All candidates require user review. Never translate conversational enthusiasm into adoption, root confirmation, publish, delegation, or active lease takeover; only a Sidecar or detected host UI user gesture can issue the needed grant. Expired-lease recovery is allowed only when the tool explicitly reports `reclaimable`. Never ask the user to edit a URL or copy a session ID.

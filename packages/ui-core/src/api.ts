@@ -2,6 +2,8 @@ import type {
   AgentActivity,
   AttentionContext,
   ChangeSet,
+  ChangeSetLeaseHandoffRequest,
+  ChangeSetLeaseStatus,
   ChangeSetWriteLease,
   NodeDetail,
   RelationDetail,
@@ -16,6 +18,8 @@ export interface BootstrapData {
   attention: AttentionContext | null;
   changeSet: ChangeSet | null;
   lease: ChangeSetWriteLease | null;
+  leaseStatus: ChangeSetLeaseStatus | null;
+  leaseHandoffRequests: ChangeSetLeaseHandoffRequest[];
   agentActivity: AgentActivity | null;
   recoveryCandidates: AttentionContext[];
   eventCursor: number;

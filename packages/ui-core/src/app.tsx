@@ -75,12 +75,25 @@ const FOCUSED_SKILL_ACTIONS = [
       '请使用 $treediagram-check 对当前焦点执行一次性审查，报告无依据假设、矛盾、证据缺口和未处理风险；不要修改设计',
   },
   {
+    label: 'Refactor 拆分',
+    description: '拆开复合节点，并对投影后的整树做交叉复核',
+    prompt:
+      '请使用 $treediagram-refactor 拆分当前焦点中隐含的多个独立设计点，并在提交候选前对整棵设计树执行重复、矛盾、依赖和关系归属的交叉复核',
+  },
+  {
     label: 'Reevaluate 影响',
     description: '在变更后重新检查影响范围并提出定向修复',
     prompt:
       '请使用 $treediagram-reevaluate 检查当前焦点的受影响范围，解释影响并提出必要的定向修复候选',
   },
 ] as const;
+
+const WHOLE_TREE_REFACTOR_ACTION = {
+  label: 'AI 整树拆分',
+  description: '扫描整棵设计树，由 AI 拆分所有高置信复合节点并持续交叉复核',
+  prompt:
+    '请使用 $treediagram-refactor 对整棵 TreeDiagram 执行全量拆分：扫描全部 Working 节点与待处理候选，识别并拆分所有高置信复合节点；按父级优先的结构顺序持续提交候选，每处理一个源节点就基于更新后的投影树重新进行重复、矛盾、依赖和关系归属复核。不要受当前焦点范围限制，也不要在源节点批次之间等待；语义不明确的节点只报告，不要猜测',
+} as const;
 
 type ThemeMode = 'dark' | 'light';
 
@@ -1134,7 +1147,12 @@ function ChangePanel({
       </aside>
     );
 
-  const ownLease = data.lease?.ownerHostSessionRef === identity.hostSessionRef;
+  const leaseState =
+    data.leaseStatus?.state ??
+    (data.lease?.ownerHostSessionRef === identity.hostSessionRef ? 'owned' : 'foreign_active');
+  const ownLease = leaseState === 'owned';
+  const reclaimableLease = leaseState === 'reclaimable';
+  const handoffRequest = data.leaseHandoffRequests[0] ?? null;
   const revise = (change: DesignChange) => {
     let parsed: Record<string, unknown>;
     try {
@@ -1164,27 +1182,78 @@ function ChangePanel({
         </div>
         <span className="version-pill">v{changeSet.version}</span>
       </div>
-      <div className={`lease-card ${ownLease ? 'owned' : 'foreign'}`}>
-        <span className="lease-icon">{ownLease ? '●' : '◐'}</span>
-        <div>
-          <strong>{ownLease ? '当前会话持有写入权' : '其他会话持有写入权'}</strong>
-          <p>{data.lease?.ownerHostSessionRef ?? 'lease 缺失'}</p>
+      <div className="lease-stack">
+        <div
+          className={`lease-card ${ownLease ? 'owned' : reclaimableLease ? 'recoverable' : 'foreign'}`}
+        >
+          <span className="lease-icon">{ownLease ? '●' : reclaimableLease ? '↻' : '◐'}</span>
+          <div>
+            <strong>
+              {ownLease
+                ? '当前会话持有写入权'
+                : reclaimableLease
+                  ? '旧会话写入权已失效'
+                  : '其他会话持有写入权'}
+            </strong>
+            <p>
+              {reclaimableLease
+                ? '可以安全恢复，现有候选不会丢失'
+                : (data.lease?.ownerHostSessionRef ?? 'lease 缺失')}
+            </p>
+          </div>
+          {!ownLease ? (
+            <button
+              onClick={() =>
+                reclaimableLease
+                  ? void run(
+                      () =>
+                        api.tool('changeset_begin', {
+                          hostSessionRef: identity.hostSessionRef,
+                          title: changeSet.title,
+                          description: changeSet.description,
+                        }),
+                      '已恢复当前工作集',
+                    )
+                  : void run(
+                      () =>
+                        api.action('take_lease', {
+                          targetId: changeSet.id,
+                          hostSessionRef: identity.hostSessionRef,
+                        }),
+                      '写入权已接管',
+                    )
+              }
+            >
+              {reclaimableLease ? '恢复工作集' : '显式接管'}
+            </button>
+          ) : null}
         </div>
-        {!ownLease ? (
-          <button
-            onClick={() =>
-              void run(
-                () =>
-                  api.action('take_lease', {
-                    targetId: changeSet.id,
-                    hostSessionRef: identity.hostSessionRef,
-                  }),
-                '写入权已接管',
-              )
-            }
-          >
-            显式接管
-          </button>
+        {handoffRequest ? (
+          <div className="lease-handoff-card">
+            <span className="lease-handoff-icon">⇄</span>
+            <div>
+              <strong>Agent 请求写入权</strong>
+              <p>{handoffRequest.purpose}</p>
+              <small title={handoffRequest.requesterHostSessionRef}>
+                请求方 {handoffRequest.requesterHostSessionRef}
+              </small>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                void run(
+                  () =>
+                    api.action('approve_lease_handoff', {
+                      targetId: handoffRequest.id,
+                      hostSessionRef: identity.hostSessionRef,
+                    }),
+                  '写入权已交给请求中的 Agent',
+                )
+              }
+            >
+              交给此 Agent
+            </button>
+          </div>
         ) : null}
       </div>
       <div className="change-summary">
@@ -1701,7 +1770,7 @@ export function TreeDiagramApp({
       current.includes(nodeId) ? '已取消固定' : '节点已固定',
     );
   };
-  const copyPrompt = async (intent: string) => {
+  const copyPrompt = async (intent: string, scope: 'focused' | 'whole-tree' = 'focused') => {
     const primary = data?.nodes.find((node) => node.node.id === data.attention?.primaryNodeId);
     const primaryChange = data?.changeSet?.changes?.find(
       (change) => change.id === data.attention?.primaryChangeId,
@@ -1709,7 +1778,10 @@ export function TreeDiagramApp({
     const focusTitle = primaryChange
       ? String(primaryChange.payload['displayTitle'] ?? primaryChange.summary)
       : primary?.revision.displayTitle;
-    const text = `${intent}。请先调用 attention_get 读取 TreeDiagram 当前“Agent 可见焦点”（${primaryChange ? '候选' : '节点'}：${focusTitle ?? '未设置'}，session: ${identity.hostSessionRef}），再调用 design_context_get，并优先处理该明确标记的目标。`;
+    const text =
+      scope === 'whole-tree'
+        ? `${intent}。这是整树操作：请调用 attention_get 读取用户上下文（session: ${identity.hostSessionRef}），但不要把当前焦点当作范围边界；随后读取完整设计树、全部关系、活动 ChangeSet 和待处理候选。`
+        : `${intent}。请先调用 attention_get 读取 TreeDiagram 当前“Agent 可见焦点”（${primaryChange ? '候选' : '节点'}：${focusTitle ?? '未设置'}，session: ${identity.hostSessionRef}），再调用 design_context_get，并优先处理该明确标记的目标。`;
     await navigator.clipboard.writeText(text);
     void run(async () => text, '已复制宿主聊天提示');
   };
@@ -1755,6 +1827,14 @@ export function TreeDiagramApp({
           </span>
         </div>
         <div className="top-actions">
+          <button
+            className="button whole-tree-action"
+            type="button"
+            title={WHOLE_TREE_REFACTOR_ACTION.description}
+            onClick={() => void copyPrompt(WHOLE_TREE_REFACTOR_ACTION.prompt, 'whole-tree')}
+          >
+            {WHOLE_TREE_REFACTOR_ACTION.label}
+          </button>
           <span className="session-chip" title={identity.hostSessionRef}>
             {identity.hostKind} · {identity.hostSessionRef.slice(0, 8)}
           </span>

@@ -17,14 +17,14 @@ Establish the smallest useful design tree without turning TreeDiagram into a cha
 ## Build the initial design
 
 1. Extract the goal, hard constraints, open questions, decisions, risks, and available evidence from the user's brief. Ask only about an ambiguity that would materially change the root.
-2. Call `changeset_begin` with a short purpose-oriented title.
+2. Call `changeset_begin` with a short purpose-oriented title. If an existing ChangeSet has a missing, expired, or previous-system-boot lease, this call safely recovers that same ChangeSet and all of its candidates for the current session. If it reports a still-active foreign lease, call `changeset_lease_handoff_request` with the initialization purpose, tell the user to click “交给此 Agent” in Sidecar, and stop writing. After confirmation, re-read and continue only when the lease is `owned`; never ask the user to edit a URL or copy a session ID.
 3. Propose one tentative `goal` root with `design_change_propose`. Then propose only the minimum useful children and relations. Prefer explicit `constraint`, `question`, `decision`, `risk`, and `evidence` nodes over generic topics.
 4. Submit one semantic change per proposal and pass the latest `expectedChangeSetVersion` every time. Re-read the ChangeSet after conflicts.
 5. Publish agent focus with `attention_agent_focus_set` while reading, proposing, or validating; finish with `phase: "idle"` and `complete: true`.
 
 ## Preserve the approval boundary
 
-- Proposals remain candidates. Never call adoption, root confirmation, delegation expansion, lease takeover, or publish without a real user-gesture grant.
+- Proposals remain candidates. Never call adoption, root confirmation, delegation expansion, active lease takeover, or publish without a real user-gesture grant. Reclaiming a lease that the tool explicitly reports as `reclaimable` is expiry recovery, not takeover.
 - Never fabricate an `approvalToken`, ask the user to paste one into chat, or treat conversational agreement as a grant.
 - Direct the user to the project-specific Sidecar URL injected at session start. Preserve its active host kind and URL-encoded session reference. The user adopts candidates, confirms the root, and publishes there.
 - Use an embedded MCP UI only after detecting that surface; the Sidecar remains the complete fallback.

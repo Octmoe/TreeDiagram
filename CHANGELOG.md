@@ -8,8 +8,11 @@ validated outside the original development machine.
 
 ### Added
 
+- A target- and version-bound Agent-to-Sidecar lease handoff request flow, including one-click user approval without URL or session-ID manipulation.
+- Runtime-generation health checks that restart stale Sidecars after a local plugin cachebuster update.
 - Git source-release workflow, Apache-2.0 licensing, release checks, and continuous integration.
 - A V2 user manual and copy-paste Codex-assisted installation flow.
+- Focused and one-command whole-tree Refactor workflows that split overloaded nodes into reviewable children while repeatedly cross-checking the projected structure against the entire tree.
 
 ### Removed
 

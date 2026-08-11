@@ -24,7 +24,8 @@ Check separately for:
 - constraints that conflict or have no measurable consequence;
 - failure modes, boundary conditions, and stakeholders not represented;
 - questions whose answer blocks validation or release.
+- overloaded nodes that hide independently reviewable claims, decisions, constraints, questions, risks, or evidence. Report these as structural findings and recommend `treediagram-refactor`; do not split them during a findings-only check.
 
-If the user asked only for findings, report them and do not write. If they asked to record the findings, use the active owned ChangeSet or begin one, then propose only durable `question`, `risk`, `constraint`, `validation_method`, or `contradicts`/`depends_on` changes. Keep facts and hypotheses visibly distinct and submit one semantic change per call.
+If the user asked only for findings, report them and do not write. If they asked to record the findings, read `design_changeset_get` with the current `hostSessionRef`: use an `owned` ChangeSet or recover one explicitly marked `reclaimable` with `changeset_begin`. For `foreign_active`, call `changeset_lease_handoff_request` with the recording purpose, tell the user to click “交给此 Agent” in Sidecar, and stop writing; after confirmation, re-read and proceed only when `owned`. Then propose only durable `question`, `risk`, `constraint`, `validation_method`, or `contradicts`/`depends_on` changes. Keep facts and hypotheses visibly distinct and submit one semantic change per call.
 
-Never adopt or publish findings yourself. A chat response is not a grant, and an approval token must never be fabricated or requested. On lease or permission errors, direct the user to the Sidecar for the exact explicit action.
+Never adopt or publish findings yourself. A chat response is not a grant, and an approval token must never be fabricated or requested. Recover only a lease explicitly reported as `reclaimable`; a handoff request is not permission until Sidecar returns the lease as `owned`. Never ask the user to edit a URL or copy a session ID.

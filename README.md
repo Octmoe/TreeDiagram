@@ -128,7 +128,9 @@ tests/v2                 unit、integration 与 browser e2e
 ## 安全边界
 
 - Sidecar 只绑定 `127.0.0.1`，浏览器写请求限制为同源。
+- 本地插件 cachebuster 变化时，健康检查会识别旧 runtime generation，并为该项目安全重启 Sidecar。
 - 同一 workspace 同时只有一个活动 ChangeSet 和一个写 lease。
+- 写 lease 会在成功写入时续租；过期或系统重启前遗留的 lease 可由新会话安全恢复。遇到仍活跃的其他会话时，Agent 会向 Sidecar 登记短时交接请求，用户点击“交给此 Agent”后再继续，无需修改 URL 或复制会话 ID。
 - Adopt、Publish、Confirm Root、扩大 Delegation 与 Lease Takeover 需要短时、目标绑定、版本绑定、单次消费的授权。
 - 备份前先停止对应 Sidecar，再复制整个 `.treediagram` 目录。
 

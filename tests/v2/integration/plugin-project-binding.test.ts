@@ -9,11 +9,21 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 interface RuntimeResult {
   projectRoot: string;
   workspace: { workspaceId: string };
-  sidecar: { pid: number | null; port: number; url: string; reused: boolean };
+  sidecar: {
+    pid: number | null;
+    port: number;
+    url: string;
+    reused: boolean;
+    runtimeGeneration: string;
+  };
 }
 
 interface PluginRuntime {
-  ensureProject(options: { projectRoot: string; runtimeRoot: string }): Promise<RuntimeResult>;
+  ensureProject(options: {
+    projectRoot: string;
+    runtimeRoot: string;
+    runtimeGeneration?: string;
+  }): Promise<RuntimeResult>;
   hasWorkspace(projectRoot: string): boolean;
   openExistingProject(options: {
     projectRoot: string;
@@ -117,6 +127,34 @@ describe('Codex plugin project binding', () => {
     expect((await runtime.sidecarStatus(projectRoot)).running).toBe(true);
   });
 
+  it('restarts a healthy Sidecar when the plugin runtime generation changes', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'treediagram-plugin-generation-'));
+    projectRoots.push(projectRoot);
+
+    const first = await runtime.ensureProject({
+      projectRoot,
+      runtimeRoot: repoRoot,
+      runtimeGeneration: 'test-generation-a',
+    });
+    const reused = await runtime.ensureProject({
+      projectRoot,
+      runtimeRoot: repoRoot,
+      runtimeGeneration: 'test-generation-a',
+    });
+    const updated = await runtime.ensureProject({
+      projectRoot,
+      runtimeRoot: repoRoot,
+      runtimeGeneration: 'test-generation-b',
+    });
+
+    expect(reused.sidecar.reused).toBe(true);
+    expect(reused.sidecar.pid).toBe(first.sidecar.pid);
+    expect(updated.sidecar.reused).toBe(false);
+    expect(updated.sidecar.runtimeGeneration).toBe('test-generation-b');
+    expect(updated.sidecar.pid).not.toBe(first.sidecar.pid);
+    expect((await runtime.sidecarStatus(projectRoot)).running).toBe(true);
+  });
+
   it('opens an existing design tree without an Agent session and cold-starts its Sidecar', async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'treediagram-human-open-'));
     projectRoots.push(projectRoot);
@@ -208,6 +246,53 @@ describe('Codex plugin project binding', () => {
         expect.stringContaining('Grill me with questions'),
         expect.stringContaining('Check the currently focused'),
       ]),
+    );
+  });
+
+  it('defines progressive node refactoring with projected whole-tree review', () => {
+    const skillsRoot = join(repoRoot, 'plugins', 'treediagram', 'skills');
+    const refactor = readFileSync(join(skillsRoot, 'treediagram-refactor', 'SKILL.md'), 'utf8');
+    const derive = readFileSync(join(skillsRoot, 'treediagram-derive', 'SKILL.md'), 'utf8');
+    const check = readFileSync(join(skillsRoot, 'treediagram-check', 'SKILL.md'), 'utf8');
+    const metadata = readFileSync(
+      join(skillsRoot, 'treediagram-refactor', 'agents', 'openai.yaml'),
+      'utf8',
+    );
+
+    expect(refactor).toContain('Allow coarse nodes during rapid exploration');
+    expect(refactor).toContain('Do not split merely because content is long');
+    expect(refactor).toContain('Keep the source node as a stable umbrella');
+    expect(refactor).toContain('Cross-check the projected whole tree');
+    expect(refactor).toContain('In focused mode, refactor one overloaded source');
+    expect(refactor).toContain('all Working nodes, relations, and pending candidates');
+    expect(refactor).toContain('whole-tree sweep mode');
+    expect(refactor).toContain('Continue until no high-confidence composite source remains');
+    expect(refactor).toContain('without waiting for adoption between sources');
+    expect(refactor).toContain('parent-first approval remains enforceable');
+    expect(derive).toContain('do not keep appending detail');
+    expect(check).toContain('recommend `treediagram-refactor`');
+    expect(metadata).toContain('$treediagram-refactor');
+    expect(metadata).toContain('every high-confidence composite node');
+  });
+
+  it('routes active foreign leases through a Sidecar-visible Agent handoff request', () => {
+    const skillsRoot = join(repoRoot, 'plugins', 'treediagram', 'skills');
+    const writingSkills = [
+      'treediagram-initialize',
+      'treediagram-derive',
+      'treediagram-grill',
+      'treediagram-check',
+      'treediagram-refactor',
+      'treediagram-reevaluate',
+      'treediagram-unbox',
+    ];
+    for (const skill of writingSkills) {
+      const contents = readFileSync(join(skillsRoot, skill, 'SKILL.md'), 'utf8');
+      expect(contents).toContain('changeset_lease_handoff_request');
+      expect(contents).toContain('交给此 Agent');
+    }
+    expect(readFileSync(join(skillsRoot, 'treediagram-derive', 'SKILL.md'), 'utf8')).toContain(
+      'never impersonate its owner or ask the user to edit a URL',
     );
   });
 
