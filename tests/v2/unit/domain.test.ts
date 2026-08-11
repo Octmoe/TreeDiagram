@@ -82,6 +82,25 @@ describe('V2 domain contracts', () => {
     }
   });
 
+  it('accepts directional problem relations used during design reconstruction', () => {
+    for (const relationType of [
+      'violates',
+      'causes',
+      'amplifies',
+      'mitigates',
+      'reveals',
+    ] as const) {
+      expect(() =>
+        validateChangePayload('create_relation', {
+          relationType,
+          sourceNodeId: 'source-node',
+          targetNodeId: 'target-node',
+          rationale: `source ${relationType} target`,
+        }),
+      ).not.toThrow();
+    }
+  });
+
   it('detects contains cycles and multiple parents deterministically', () => {
     const nodes = [node('root-node', ['root']), node('child-a'), node('child-b')];
     const result = checkConsistency(nodes, [

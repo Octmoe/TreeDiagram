@@ -45,3 +45,14 @@
 - 恰有一个有效、用户确认的根；contains 无环且每个节点最多一个 contains 父节点；Relation endpoint 存在；
   Node/Relation review 不得为 required/blocked；blocking question 与无证据 supported 状态阻止发布。
 - 检查器只读取 materialized Working Head；所有结果包含稳定 code、severity、entityId/path 与可操作说明。
+
+## 5. 问题关系方向
+
+- `contradicts` 表示两个断言不能同时成立，语义上对称；
+- `violates` 从行为或决策指向被破坏的约束、要求或不变量；
+- `causes` 从条件或决策指向其产生的风险、失败或问题；
+- `amplifies` 从加剧因素指向被放大的风险或问题；
+- `mitigates` 从缓解手段指向其降低的风险或问题；
+- `reveals` 从证据、验证或观察指向被揭示的潜在问题。
+
+每条问题关系必须包含可读 rationale。关系本身不证明因果为真；由 Agent 从现有设计中重建但没有直接来源的端点或推理，应使用 tentative、assumed、required 状态等待用户审查。

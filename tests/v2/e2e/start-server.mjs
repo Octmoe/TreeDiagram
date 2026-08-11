@@ -31,9 +31,14 @@ if (seeded.error) throw seeded.error;
 if (seeded.status !== 0) process.exit(seeded.status ?? 1);
 
 const { V2Store } = await import('@treediagram/storage-sqlite');
-const { buildSidecar } = await import('@treediagram/sidecar/server');
+const { buildSidecar, createWorkspaceArchivePath } = await import('@treediagram/sidecar/server');
 const store = new V2Store(workspaceDir);
-const app = buildSidecar(store);
+const app = buildSidecar(store, {
+  projectRoot: workspaceDir,
+  archivePath: createWorkspaceArchivePath(workspaceDir, store.meta.workspaceId),
+  requestClose: () => undefined,
+  requestClear: () => undefined,
+});
 await app.listen({ host: '127.0.0.1', port: 4321 });
 
 let closing = false;

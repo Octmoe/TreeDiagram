@@ -64,6 +64,12 @@ codex plugin add treediagram@treediagram-local
    请使用 TreeDiagram 初始化这个项目，把当前想法整理成一个小而可审查的根设计。
    ```
 
+   对已有复杂实现进行结构化梳理时，可改为：
+
+   ```text
+   请使用 TreeDiagram Initialize 的已有复杂设计梳理模式，从总体到细节多轮拆分，并把推测的中间设计思路与已有事实分开标记。
+   ```
+
 4. 在浏览器中审查候选：先批准父节点，再批准子节点。
 5. 处理完全部候选后执行校验并发布 Release。
 
@@ -131,6 +137,7 @@ tests/v2                 unit、integration 与 browser e2e
 - 本地插件 cachebuster 变化时，健康检查会识别旧 runtime generation，并为该项目安全重启 Sidecar。
 - 同一 workspace 同时只有一个活动 ChangeSet 和一个写 lease。
 - 写 lease 会在成功写入时续租；过期或系统重启前遗留的 lease 可由新会话安全恢复。遇到仍活跃的其他会话时，Agent 会向 Sidecar 登记短时交接请求，用户点击“交给此 Agent”后再继续，无需修改 URL 或复制会话 ID。
+- 用户可从 Sidecar 主动关闭项目服务，或在核对项目名和归档绝对路径后把 `.treediagram` 移入项目本地 `.treediagram-archive/`。归档历史只允许用户在文件系统中手动永久删除。
 - Adopt、Publish、Confirm Root、扩大 Delegation 与 Lease Takeover 需要短时、目标绑定、版本绑定、单次消费的授权。
 - 备份前先停止对应 Sidecar，再复制整个 `.treediagram` 目录。
 

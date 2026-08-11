@@ -1,4 +1,4 @@
 interface:
   display_name: 'Initialize TreeDiagram'
-  short_description: 'Turn a fuzzy project into reviewable design roots'
-  default_prompt: 'Use $treediagram-initialize to clarify this project and propose its first design roots.'
+  short_description: 'Start or reconstruct a reviewable design tree'
+  default_prompt: 'Use $treediagram-initialize to start or reconstruct this project as a reviewable design tree.'

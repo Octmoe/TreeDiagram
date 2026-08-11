@@ -36,10 +36,16 @@ const RELATION_LABELS: Record<string, string> = {
   derived_from: '派生自',
   supports: '支持',
   contradicts: '矛盾',
+  violates: '违反',
+  causes: '导致',
+  amplifies: '加剧',
+  mitigates: '缓解',
+  reveals: '揭示',
   constrains: '约束',
   addresses: '回应',
   selects: '选择',
   rejects: '排除',
+  supersedes: '取代',
 };
 
 const STATE_LABELS: Record<string, string> = {
@@ -93,6 +99,13 @@ const WHOLE_TREE_REFACTOR_ACTION = {
   description: '扫描整棵设计树，由 AI 拆分所有高置信复合节点并持续交叉复核',
   prompt:
     '请使用 $treediagram-refactor 对整棵 TreeDiagram 执行全量拆分：扫描全部 Working 节点与待处理候选，识别并拆分所有高置信复合节点；按父级优先的结构顺序持续提交候选，每处理一个源节点就基于更新后的投影树重新进行重复、矛盾、依赖和关系归属复核。不要受当前焦点范围限制，也不要在源节点批次之间等待；语义不明确的节点只报告，不要猜测',
+} as const;
+
+const EXISTING_DESIGN_ORGANIZE_ACTION = {
+  label: 'AI 梳理已有设计',
+  description: '从总体到细节分轮拆解现有复杂设计，补出推理链并标示问题关系',
+  prompt:
+    '请使用 $treediagram-initialize 的“已有复杂设计梳理”模式处理当前项目：先盘点现有设计材料并完成总体结构拆分，再分轮细化复合节点；对于只有结论的部分，将可验证的既有事实与推测的假设、设计动机和中间推导分开表达，并补成可审阅的候选链。最后用矛盾、违反、导致、加剧与缓解等问题关系交叉复核整棵投影树。不要把推测伪装成事实。',
 } as const;
 
 type ThemeMode = 'dark' | 'light';
@@ -1670,6 +1683,14 @@ export function TreeDiagramApp({
   const [inspectedChangeId, setInspectedChangeId] = useState<string | null>(null);
   const [previewedChangeId, setPreviewedChangeId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(readThemePreference);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [lifecycleDialog, setLifecycleDialog] = useState<'close' | 'clear' | null>(null);
+  const [confirmationText, setConfirmationText] = useState('');
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [lifecycleComplete, setLifecycleComplete] = useState<{
+    mode: 'close' | 'clear';
+    archivePath?: string;
+  } | null>(null);
   const activeChangeId = previewedChangeId ?? inspectedChangeId;
 
   useEffect(() => {
@@ -1786,6 +1807,27 @@ export function TreeDiagramApp({
     void run(async () => text, '已复制宿主聊天提示');
   };
 
+  const submitLifecycle = async () => {
+    if (!data || !data.lifecycle.available || !lifecycleDialog) return;
+    setLifecycleBusy(true);
+    setError(null);
+    try {
+      if (lifecycleDialog === 'close') {
+        await api.closeWorkspace();
+        setLifecycleComplete({ mode: 'close' });
+      } else {
+        const result = await api.clearWorkspace(confirmationText);
+        setLifecycleComplete({ mode: 'clear', archivePath: result.archivePath });
+      }
+      setLifecycleDialog(null);
+      setWorkspaceMenuOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+
   if (loading && !data)
     return (
       <div className="loading-screen">
@@ -1801,6 +1843,37 @@ export function TreeDiagramApp({
         <button className="button primary" onClick={() => void sidecar.refresh()}>
           重试
         </button>
+      </div>
+    );
+
+  if (lifecycleComplete)
+    return (
+      <div className="lifecycle-complete-screen">
+        <span className="brand-mark">T</span>
+        <h1>{lifecycleComplete.mode === 'clear' ? '工作区已进入归档清空流程' : '工作区已关闭'}</h1>
+        <p>
+          {lifecycleComplete.mode === 'clear'
+            ? 'Sidecar 退出后会把完整历史移动到下方归档目录。下次 Agent 使用此项目时会启动一个新的空工作区。'
+            : '设计数据仍保留在项目中。下次 Agent 使用 TreeDiagram 时，可能会自动触发 Sidecar 启动流程。'}
+        </p>
+        {lifecycleComplete.archivePath ? (
+          <div className="archive-result">
+            <small>历史归档路径</small>
+            <code>{lifecycleComplete.archivePath}</code>
+            <button
+              className="button"
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(lifecycleComplete.archivePath!)}
+            >
+              复制路径
+            </button>
+          </div>
+        ) : null}
+        <p className="manual-delete-note">
+          {lifecycleComplete.mode === 'clear'
+            ? 'TreeDiagram 不会永久删除这份历史；如需彻底删除，请稍后自行前往该路径手动删除。'
+            : '现在可以安全关闭此页面。'}
+        </p>
       </div>
     );
 
@@ -1828,6 +1901,14 @@ export function TreeDiagramApp({
         </div>
         <div className="top-actions">
           <button
+            className="button whole-tree-action existing-design-action"
+            type="button"
+            title={EXISTING_DESIGN_ORGANIZE_ACTION.description}
+            onClick={() => void copyPrompt(EXISTING_DESIGN_ORGANIZE_ACTION.prompt, 'whole-tree')}
+          >
+            {EXISTING_DESIGN_ORGANIZE_ACTION.label}
+          </button>
+          <button
             className="button whole-tree-action"
             type="button"
             title={WHOLE_TREE_REFACTOR_ACTION.description}
@@ -1851,6 +1932,47 @@ export function TreeDiagramApp({
           <button className="icon-button" title="刷新" onClick={() => void sidecar.refresh()}>
             ↻
           </button>
+          <div className="workspace-menu-wrap">
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="工作区操作"
+              aria-expanded={workspaceMenuOpen}
+              title={data.lifecycle.available ? '工作区操作' : '当前运行方式不支持关闭工作区'}
+              disabled={!data.lifecycle.available}
+              onClick={() => setWorkspaceMenuOpen((current) => !current)}
+            >
+              ⋯
+            </button>
+            {workspaceMenuOpen && data.lifecycle.available ? (
+              <div className="workspace-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setLifecycleDialog('close');
+                    setWorkspaceMenuOpen(false);
+                  }}
+                >
+                  <strong>关闭工作区</strong>
+                  <span>停止当前项目的 Sidecar，保留全部设计数据</span>
+                </button>
+                <button
+                  className="danger"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setConfirmationText('');
+                    setLifecycleDialog('clear');
+                    setWorkspaceMenuOpen(false);
+                  }}
+                >
+                  <strong>归档并清空工作区</strong>
+                  <span>保留一份历史归档，下次启动为空工作区</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
       <FocusBar data={data} identity={identity} api={api} run={run} />
@@ -1926,6 +2048,94 @@ export function TreeDiagramApp({
         <div className="toast success">
           <span>✓</span>
           <strong>{notice}</strong>
+        </div>
+      ) : null}
+      {lifecycleDialog && data.lifecycle.available ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className={`lifecycle-dialog ${lifecycleDialog === 'clear' ? 'destructive' : ''}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lifecycle-dialog-title"
+          >
+            <header>
+              <div>
+                <small>PROJECT WORKSPACE</small>
+                <h2 id="lifecycle-dialog-title">
+                  {lifecycleDialog === 'clear' ? '归档并清空工作区' : '关闭工作区'}
+                </h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="取消"
+                disabled={lifecycleBusy}
+                onClick={() => setLifecycleDialog(null)}
+              >
+                ×
+              </button>
+            </header>
+            {lifecycleDialog === 'close' ? (
+              <>
+                <p>
+                  这会停止当前项目的 Sidecar，但不会删除设计树。稍后 Agent 再次使用 TreeDiagram
+                  时，可能会自动触发启动流程。
+                </p>
+                <div className="lifecycle-fact">
+                  <span>保留位置</span>
+                  <code>{data.lifecycle.projectRoot}</code>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>
+                  当前工作区会先完整归档，再从项目中清空。TreeDiagram
+                  不会永久删除历史；如需彻底删除，必须前往归档路径手动删除。
+                </p>
+                <div className="archive-preview">
+                  <span>将留下的归档文件夹</span>
+                  <code>{data.lifecycle.archivePath}</code>
+                </div>
+                <label className="confirmation-field">
+                  <span>
+                    输入项目名称 <b>{data.lifecycle.confirmationText}</b> 以确认
+                  </span>
+                  <input
+                    autoFocus
+                    value={confirmationText}
+                    onChange={(event) => setConfirmationText(event.target.value)}
+                    placeholder={data.lifecycle.confirmationText}
+                  />
+                </label>
+              </>
+            )}
+            <footer>
+              <button
+                className="button ghost"
+                type="button"
+                disabled={lifecycleBusy}
+                onClick={() => setLifecycleDialog(null)}
+              >
+                取消
+              </button>
+              <button
+                className={`button ${lifecycleDialog === 'clear' ? 'danger-confirm' : 'primary'}`}
+                type="button"
+                disabled={
+                  lifecycleBusy ||
+                  (lifecycleDialog === 'clear' &&
+                    confirmationText !== data.lifecycle.confirmationText)
+                }
+                onClick={() => void submitLifecycle()}
+              >
+                {lifecycleBusy
+                  ? '正在处理…'
+                  : lifecycleDialog === 'clear'
+                    ? '确认归档并清空'
+                    : '关闭 Sidecar'}
+              </button>
+            </footer>
+          </section>
         </div>
       ) : null}
     </div>

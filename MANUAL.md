@@ -115,13 +115,21 @@ codex plugin add treediagram@treediagram-local
 
 Initialize 应只提出少量根部候选，不应一次生成整棵巨大设计树。你可以要求 Agent 缩小范围或分批提交。
 
+如果目标不是从零设计，而是梳理已经存在的复杂实现、规格或产品形态，可以直接说：
+
+```text
+请使用 TreeDiagram Initialize 的已有复杂设计梳理模式。先从总体结构拆分，再分轮细化；补出只有结论部分可能缺失的假设与设计思路，并明确标记哪些内容是推测。最后标出矛盾、违反约束以及问题产生和缓解关系。
+```
+
+这个模式允许形成较完整的候选树，但仍按父级优先顺序分批写入：先总体结构，再细节拆分，再补推理链，最后进行整树问题复核。直接来自代码、文档或用户说明的事实会与 Agent 重建的假设分开；重建假设默认是待确认、认知状态为“假设”、复核状态为“需要复核”。
+
 ## 5. 日常与 Agent 协作
 
 TreeDiagram 提供七个 Skills。
 
 | Skill       | 什么时候使用               | 预期结果                             |
 | ----------- | -------------------------- | ------------------------------------ |
-| Initialize  | 新项目或空设计空间         | 建立小而可审查的根设计               |
+| Initialize  | 新项目，或梳理已有复杂设计 | 建立小根设计，或多轮重建现有设计结构 |
 | Derive      | 继续展开当前分支           | 提出子节点、关系或更精确的约束       |
 | Grill       | 希望 AI 分轮追问你         | 先澄清隐含决定，经你确认后再形成候选 |
 | Check       | 希望一次性审计当前焦点     | 返回证据缺口、矛盾、弱决策和风险     |
@@ -174,6 +182,8 @@ Sidecar 默认是三栏工作台：
 
 顶部 Shared Focus 显示当前主焦点、已选数量、固定数量和 Agent 状态。界面支持深色与亮色主题。
 
+顶部还提供两个整树级 AI 提示入口：**AI 梳理已有设计** 调用 Initialize 的重建模式，**AI 整树拆分** 调用 Refactor 清理已经进入设计树的复合节点。它们只复制明确的宿主聊天提示，不会在网页内部运行模型。
+
 ## 7. 选择节点与“Agent 可见”
 
 点击 Working 节点或候选节点会更新 Attention，但不会自动调用模型。
@@ -194,7 +204,8 @@ Sidecar 默认是三栏工作台：
 
 - 能解析父节点：显示在对应树位置；
 - 暂时没有父节点：显示在“待定位”区域；
-- `supports`、`depends_on`、`constrains` 等语义关系显示关系数量提示；
+- `supports`、`depends_on`、`constrains` 等普通语义关系显示关系数量提示；
+- 问题关系使用明确方向：`contradicts`（矛盾）、`violates`（违反约束）、`causes`（导致问题）、`amplifies`（加剧）、`mitigates`（缓解）、`reveals`（由证据揭示）；
 - 聚焦关系卡时，树会分别高亮起点和终点。
 
 候选投影只是预览，不属于 Working State，也不会出现在已发布 Release 中。
@@ -260,6 +271,13 @@ Sidecar 是按项目运行的 loopback 后台进程：
 - 电脑关机、进程退出或显式 Stop 会停止；
 - 服务停止不会删除设计数据。
 
+页面右上角的 **工作区操作** 菜单提供：
+
+- **关闭工作区**：弹窗说明影响后停止当前 Sidecar，完整保留 `.treediagram`。稍后 Agent 再使用该项目时，可能自动触发启动流程；
+- **归档并清空工作区**：先显示将要创建的绝对归档路径，并要求输入完整项目名称。确认后，Sidecar 退出，整个 `.treediagram` 被原子移动到 `<项目>/.treediagram-archive/<时间-工作区标识>/`。下次启动会建立新的空工作区。
+
+“归档并清空”不会永久删除历史。完成页会再次显示归档路径；如需彻底删除，必须由用户稍后前往该路径手动删除。TreeDiagram 不提供远程或一键永久删除，以避免误操作。
+
 查看状态：
 
 ```powershell
@@ -303,6 +321,8 @@ npm.cmd run treediagram:open -- --workspace H:\path\to\project
 - `.treediagram/state-v2.sqlite`；
 - `.treediagram/workspace.json`；
 - Sidecar 端口和 `.treediagram/sidecar.json` 进程记录。
+
+归档清空产生的历史位于该项目自己的 `.treediagram-archive/`，也不会与其他项目共享。
 
 不同项目不会共享设计事实。同一项目的多个任务共享 Working State 和 Release，但 Attention 按宿主 session 管理，并需要显式恢复。
 

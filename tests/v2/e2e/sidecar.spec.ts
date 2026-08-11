@@ -23,6 +23,7 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   const refactorAction = page.getByRole('button', { name: /Refactor 拆分/ });
   const reevaluateAction = page.getByRole('button', { name: /Reevaluate 影响/ });
   const wholeTreeRefactorAction = page.getByRole('button', { name: 'AI 整树拆分' });
+  const organizeExistingDesignAction = page.getByRole('button', { name: 'AI 梳理已有设计' });
   await expect(deriveAction).toHaveAttribute('title', '沿当前焦点继续形成小而可审阅的候选');
   await expect(grillAction).toHaveAttribute('title', '分轮追问隐藏决定，在达成共识前不改设计');
   await expect(checkAction).toHaveAttribute('title', '一次性审查假设、矛盾、证据缺口与风险');
@@ -31,6 +32,10 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   await expect(wholeTreeRefactorAction).toHaveAttribute(
     'title',
     '扫描整棵设计树，由 AI 拆分所有高置信复合节点并持续交叉复核',
+  );
+  await expect(organizeExistingDesignAction).toHaveAttribute(
+    'title',
+    '从总体到细节分轮拆解现有复杂设计，补出推理链并标示问题关系',
   );
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await wholeTreeRefactorAction.click();
@@ -43,6 +48,13 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain('不要在源节点批次之间等待');
+  await organizeExistingDesignAction.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('$treediagram-initialize');
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('已有复杂设计梳理');
   await grillAction.click();
   await expect(page.getByText('已复制宿主聊天提示')).toBeVisible();
   await expect
@@ -76,6 +88,25 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   expect(workingAttention.data.primaryNodeId).toBeTruthy();
   expect(workingAttention.data.selectedNodeIds).toHaveLength(1);
   await expect(page.getByRole('heading', { name: rootTitle })).toBeVisible();
+
+  await page.getByRole('button', { name: '工作区操作' }).click();
+  await page.getByRole('menuitem', { name: /关闭工作区/ }).click();
+  await expect(page.getByRole('dialog', { name: '关闭工作区' })).toContainText(
+    '可能会自动触发启动流程',
+  );
+  await page
+    .getByRole('dialog', { name: '关闭工作区' })
+    .locator('footer')
+    .getByRole('button', { name: '取消' })
+    .click();
+  await page.getByRole('button', { name: '工作区操作' }).click();
+  await page.getByRole('menuitem', { name: /归档并清空工作区/ }).click();
+  const clearDialog = page.getByRole('dialog', { name: '归档并清空工作区' });
+  await expect(clearDialog).toContainText('.treediagram-archive');
+  await expect(clearDialog.getByRole('button', { name: '确认归档并清空' })).toBeDisabled();
+  await clearDialog.getByRole('textbox').fill('E2E Design Space');
+  await expect(clearDialog.getByRole('button', { name: '确认归档并清空' })).toBeEnabled();
+  await clearDialog.locator('footer').getByRole('button', { name: '取消' }).click();
 
   await page.getByRole('button', { name: '固定节点' }).first().click();
   await page.locator('.tree-title', { hasText: constraintTitle }).click({ modifiers: ['Control'] });

@@ -16,7 +16,7 @@
     "category": "Productivity",
     "capabilities": ["Project-isolated MCP tools", "Automatic Sidecar", "Approval-gated writes"],
     "defaultPrompt": [
-      "Initialize this project as a reviewable TreeDiagram design.",
+      "Initialize a new design or reconstruct this existing complex design as a reviewable TreeDiagram.",
       "Grill me with questions about the currently focused TreeDiagram plan.",
       "Check the currently focused TreeDiagram branch for evidence gaps and risks."
     ],

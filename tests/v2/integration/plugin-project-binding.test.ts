@@ -275,6 +275,31 @@ describe('Codex plugin project binding', () => {
     expect(metadata).toContain('every high-confidence composite node');
   });
 
+  it('defines a multi-pass Initialize variant for reconstructing existing designs', () => {
+    const skillsRoot = join(repoRoot, 'plugins', 'treediagram', 'skills');
+    const initialize = readFileSync(join(skillsRoot, 'treediagram-initialize', 'SKILL.md'), 'utf8');
+    const metadata = readFileSync(
+      join(skillsRoot, 'treediagram-initialize', 'agents', 'openai.yaml'),
+      'utf8',
+    );
+    const manifest = readFileSync(
+      join(repoRoot, 'plugins', 'treediagram', '.codex-plugin', 'plugin.json'),
+      'utf8',
+    );
+
+    expect(initialize).toContain('existing-design reconstruction mode');
+    expect(initialize).toContain('Pass 1: overall decomposition');
+    expect(initialize).toContain('Pass 2: detail decomposition');
+    expect(initialize).toContain('Pass 3: recover missing reasoning');
+    expect(initialize).toContain('Pass 4: mark problem formation');
+    expect(initialize).toContain('Never promote a reconstructed hypothesis to fact');
+    expect(initialize).toContain('`violates`');
+    expect(initialize).toContain('`causes`');
+    expect(initialize).toContain('`mitigates`');
+    expect(metadata).toContain('start or reconstruct');
+    expect(manifest).toContain('reconstruct this existing complex design');
+  });
+
   it('routes active foreign leases through a Sidecar-visible Agent handoff request', () => {
     const skillsRoot = join(repoRoot, 'plugins', 'treediagram', 'skills');
     const writingSkills = [

@@ -12,6 +12,11 @@ export function impactClosure(
     'constrains',
     'supports',
     'contradicts',
+    'violates',
+    'causes',
+    'amplifies',
+    'mitigates',
+    'reveals',
   ]);
   while (queue.length > 0) {
     const current = queue.shift()!;
