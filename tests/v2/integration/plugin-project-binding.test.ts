@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -94,7 +94,7 @@ describe('Codex plugin project binding', () => {
       const sidecar = JSON.parse(readFileSync(join(stateDir, 'sidecar.json'), 'utf8')) as {
         projectRoot: string;
       };
-      expect(sidecar.projectRoot).toBe(projectRoot);
+      expect(sidecar.projectRoot).toBe(realpathSync.native(projectRoot));
     }
   });
 
@@ -170,7 +170,7 @@ describe('Codex plugin project binding', () => {
     );
 
     expect(hook.status).toBe(0);
-    expect(hook.stdout).toContain(`workspace: ${projectRoot}`);
+    expect(hook.stdout).toContain(`workspace: ${realpathSync.native(projectRoot)}`);
     expect(hook.stdout).toContain('session=codex-test-session');
     expect(hook.stdout).toContain('hostSessionRef 使用: codex-test-session');
     expect((await runtime.sidecarStatus(projectRoot)).running).toBe(true);
