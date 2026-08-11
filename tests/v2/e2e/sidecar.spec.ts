@@ -17,6 +17,30 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   await expect(page.locator('.focus-main')).toContainText(
     '节点焦点 · Agent 可通过 attention_get 读取',
   );
+  const deriveAction = page.getByRole('button', { name: /Derive 推导/ });
+  const grillAction = page.getByRole('button', { name: /Grill 追问/ });
+  const checkAction = page.getByRole('button', { name: /Check 审查/ });
+  const reevaluateAction = page.getByRole('button', { name: /Reevaluate 影响/ });
+  await expect(deriveAction).toHaveAttribute('title', '沿当前焦点继续形成小而可审阅的候选');
+  await expect(grillAction).toHaveAttribute('title', '分轮追问隐藏决定，在达成共识前不改设计');
+  await expect(checkAction).toHaveAttribute('title', '一次性审查假设、矛盾、证据缺口与风险');
+  await expect(reevaluateAction).toHaveAttribute('title', '在变更后重新检查影响范围并提出定向修复');
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await grillAction.click();
+  await expect(page.getByText('已复制宿主聊天提示')).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('$treediagram-grill');
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('在我确认达成共识前不要写入候选或实施');
+  await checkAction.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('$treediagram-check');
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('不要修改设计');
   const workingAttentionResponse = await request.post('/api/v2/tools/attention_get', {
     data: {
       hostKind: 'codex',

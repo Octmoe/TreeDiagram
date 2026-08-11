@@ -56,6 +56,32 @@ const STATE_LABELS: Record<string, string> = {
   blocked: '已阻塞',
 };
 
+const FOCUSED_SKILL_ACTIONS = [
+  {
+    label: 'Derive 推导',
+    description: '沿当前焦点继续形成小而可审阅的候选',
+    prompt: '请使用 $treediagram-derive 从当前焦点继续推导，以小而可审阅的候选节点和关系提交',
+  },
+  {
+    label: 'Grill 追问',
+    description: '分轮追问隐藏决定，在达成共识前不改设计',
+    prompt:
+      '请使用 $treediagram-grill 围绕当前焦点分轮追问我，澄清隐藏决定；在我确认达成共识前不要写入候选或实施',
+  },
+  {
+    label: 'Check 审查',
+    description: '一次性审查假设、矛盾、证据缺口与风险',
+    prompt:
+      '请使用 $treediagram-check 对当前焦点执行一次性审查，报告无依据假设、矛盾、证据缺口和未处理风险；不要修改设计',
+  },
+  {
+    label: 'Reevaluate 影响',
+    description: '在变更后重新检查影响范围并提出定向修复',
+    prompt:
+      '请使用 $treediagram-reevaluate 检查当前焦点的受影响范围，解释影响并提出必要的定向修复候选',
+  },
+] as const;
+
 type ThemeMode = 'dark' | 'light';
 
 function readThemePreference(): ThemeMode {
@@ -904,16 +930,14 @@ function Inspector({
       </header>
       <div className="intent-strip">
         <span>围绕此节点</span>
-        {(
-          [
-            ['继续推导', '从这里向下推导'],
-            ['质疑分支', '质疑此分支的关键假设'],
-            ['查找遗漏', '查找遗漏依赖与约束'],
-            ['解释影响', '检查受影响范围并解释'],
-          ] as const
-        ).map(([label, intent]) => (
-          <button key={label} onClick={() => onPrompt(intent)}>
-            {label}
+        {FOCUSED_SKILL_ACTIONS.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            title={action.description}
+            onClick={() => onPrompt(action.prompt)}
+          >
+            {action.label}
             <span>↗</span>
           </button>
         ))}
