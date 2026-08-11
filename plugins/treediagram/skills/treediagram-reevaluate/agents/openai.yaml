@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Re-evaluate TreeDiagram'
+  short_description: 'Review deterministic impact after adopted changes'
+  default_prompt: 'Use $treediagram-reevaluate to review the impact of the latest adopted TreeDiagram changes.'

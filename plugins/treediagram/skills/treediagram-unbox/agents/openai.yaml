@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Unbox TreeDiagram'
+  short_description: 'Reopen a converged design space around the focus'
+  default_prompt: 'Use $treediagram-unbox to reopen the current TreeDiagram design boundary.'

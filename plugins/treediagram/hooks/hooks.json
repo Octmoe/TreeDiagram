@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/session-start.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}\\scripts\\session-start.mjs\"",
+            "statusMessage": "正在绑定当前项目的 TreeDiagram 设计树"
+          }
+        ]
+      }
+    ]
+  }
+}

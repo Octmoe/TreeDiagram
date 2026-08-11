@@ -1,0 +1,9 @@
+mcp_servers:
+  treediagram:
+    command: 'node'
+    args:
+      - '<TREE_DIAGRAM_REPO>/packages/mcp/dist/stdio.js'
+    env:
+      TREEDIAGRAM_WORKSPACE: '<V2_WORKSPACE>'
+    enabled: true
+    supports_parallel_tool_calls: false

@@ -1,0 +1,24 @@
+{
+  "name": "@treediagram/mcp",
+  "version": "2.0.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@treediagram/attention": "*",
+    "@treediagram/contracts": "*",
+    "@treediagram/domain": "*",
+    "@treediagram/storage-sqlite": "*",
+    "zod": "^4.4.3"
+  }
+}

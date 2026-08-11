@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Grill Me in TreeDiagram'
+  short_description: 'Resolve hidden decisions through structured questions'
+  default_prompt: 'Use $treediagram-grill to question me about the current TreeDiagram plan until we reach shared understanding.'

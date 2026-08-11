@@ -5,8 +5,8 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: 'unit',
-          include: ['tests/unit/**/*.test.ts'],
+          name: 'contract-domain',
+          include: ['tests/v2/unit/**/*.test.ts'],
           environment: 'node',
           testTimeout: 30000,
         },
@@ -14,18 +14,10 @@ export default defineConfig({
       {
         test: {
           name: 'integration',
-          include: ['tests/integration/**/*.test.ts'],
+          include: ['tests/v2/integration/**/*.test.ts'],
           environment: 'node',
           testTimeout: 120000,
           hookTimeout: 120000,
-        },
-      },
-      {
-        test: {
-          name: 'model-smoke',
-          include: ['tests/model-smoke/**/*.test.ts'],
-          environment: 'node',
-          testTimeout: 300000,
         },
       },
     ],

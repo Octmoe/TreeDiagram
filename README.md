@@ -1,195 +1,170 @@
-# TreeDiagram
+# TreeDiagram V2
 
-> **项目正在进行 V2 架构转型。** 当前方向是“宿主聊天 Harness + TreeDiagram Skill/MCP + 常驻设计树”，
-> 详见 [DESIGN_V2.md](./DESIGN_V2.md)。原 standalone Agent Harness 已完整冻结在
-> `archive/v1-harness-baseline-2026-08-09`，归档说明见 [ARCHIVE.md](./ARCHIVE.md)。
+TreeDiagram 是面向 AI Agent 协作的持久设计空间：宿主负责聊天、推理和工具循环；TreeDiagram 负责设计事实、共享注意力、可审查候选、确定性校验和不可变 Release。它不调用模型，也不保存模型私有推理。
 
-TreeDiagram V2 是一个面向 AI Agent 协作的持久设计空间。宿主 Harness 负责聊天、推理与工具循环；
-TreeDiagram 负责设计状态、共享注意力、确定性校验、ChangeSet、Release，以及让用户可以直接选择节点
-来指示 Agent 工作的常驻树形界面。
+V2 是全新产品边界，只创建 `treediagram-v2` workspace，不迁移或兼容读取 V1。V1 基线仍可通过 [ARCHIVE.md](./ARCHIVE.md) 审计和恢复。
 
-下文记录的命令和界面描述仍对应已归档的 V1 实现，仅用于运行或审计旧产品；V2 不兼容这些入口。
+当前源码版本为 `2.0.0-alpha.1`，按 Apache-2.0 许可发布。首个预览版以 Windows、Node.js 24+ 和 Codex Desktop/CLI 为主要验证环境；其他平台在 CI 和独立机器验证完成前不作兼容性承诺。
 
-## 设计文档
+## 最短试用
 
-- [V2 整体设计](./DESIGN_V2.md)：当前产品边界、Attention Context、Skill/MCP/UI 架构与全新产品策略。
-- [V2 实施计划](./IMPLEMENTATION_PLAN_V2.md)：全新产品的里程碑、完成条件和测试门禁。
-- [V1 归档说明](./ARCHIVE.md)：归档引用、恢复方式与资产处置。
-- [V1 实现规格](./V1_SPEC.md)：已归档的首版范围、领域模型、工作流、架构与验收标准。
-- [V1 设计探索与决策记录](./DESIGN.md)：已归档的产品共识、决策依赖和逐轮推演历史。
-- [V1 详细实现设计](./IMPLEMENTATION_DESIGN.md)：已归档的技术栈、数据库、API、Agent 与 UI 契约。
-- [V1 HTTP API 契约](./docs/API_CONTRACT.md)：已归档的逐路由权限、请求、响应与错误契约。
-- [V1 M1–M5 计划](./IMPLEMENTATION_PLAN.md)：已归档的里程碑依赖、交付边界和完成定义。
-- [V1 使用手册](./MANUAL.md)：已归档实现的运行、工作流与发布说明。
+要求 Node.js 24+、npm 与 Codex。克隆源码后运行一条显式安装命令：
 
-## 环境要求
+```powershell
+npm.cmd run install:codex
+```
 
-- Node.js ≥ 24（`engines` 已锁定）
-- npm（workspaces 单体仓库：`packages/*` + `apps/*`）
+命令会执行冻结依赖安装、构建、本机 MCP 配置生成、repo marketplace 注册和插件安装。它会为安装副本生成 Codex cachebuster，但会自动恢复源码 manifest，不让安装过程污染 Git 工作区。若当前终端无法调用 Codex CLI，可先只准备运行时：
 
-## 安装与构建
+```powershell
+npm.cmd run install:codex -- --no-codex
+```
+
+然后在可使用 Codex CLI 的终端执行：
+
+```powershell
+codex plugin marketplace add .
+codex plugin add treediagram@treediagram-local
+```
+
+在 Codex 中审核并信任 TreeDiagram 的 `SessionStart` Hook，然后新建任务。此后打开任意项目时，插件会自动：
+
+1. 把该任务的 `cwd` 作为项目根目录；
+2. 初始化 `<项目>/.treediagram/state-v2.sqlite`；
+3. 为该项目启动或复用独立 Sidecar，并把动态 URL 注入任务上下文；
+4. 通过 Codex 托管的 stdio MCP 连接同一个项目设计树。
+
+日常使用不再需要运行 npm，也不会把一个项目的设计树复用到另一个项目。不同项目拥有不同 `workspaceId`、SQLite 文件、Sidecar 端口与进程记录；同一项目的多个任务共享设计事实，但 Attention 仍按任务会话隔离。
+
+### 不进入 AI 会话，直接查看已有设计树
+
+电脑重启会结束 Sidecar 进程，但不会删除项目中的设计状态。若想在下一次 AI 会话之前先查看设计树，可直接双击仓库根目录的 [`Open TreeDiagram.cmd`](./Open%20TreeDiagram.cmd)，然后选择已经包含 `.treediagram` 的项目目录。启动器会：
+
+1. 拒绝没有现有设计树的目录，避免一次误选隐式初始化新 workspace；
+2. 恢复或复用该项目自己的 Sidecar；
+3. 使用该项目的动态端口自动打开浏览器。
+
+这个入口不启动 Codex、不调用 Agent、不运行 initialize Skill，也不创建 ChangeSet。命令行等价入口为：
+
+```powershell
+node .\plugins\treediagram\scripts\project.mjs open --workspace H:\path\to\project
+```
+
+在 TreeDiagram 源码目录中也可以运行：
+
+```powershell
+npm.cmd run treediagram:open -- --workspace H:\path\to\project
+```
+
+本仓库开发时可用下面的一条命令重新构建、刷新插件运行时并在后台启动当前项目；命令完成后终端可关闭：
+
+```powershell
+npm.cmd run try:codex
+```
+
+插件更新后需要重新安装并新建任务，Codex 才会加载新的缓存副本与 Hook 定义。`SessionStart` 只匹配任务首次启动与恢复；对话压缩不会重复执行项目启动检查。
+
+从 Git 拉取新版本后运行：
+
+```powershell
+npm.cmd run update:codex
+```
+
+卸载应在 Codex 的 `/plugins` 浏览器中完成。下面的命令会给出卸载入口，并可在提供项目路径时先停止对应 Sidecar；它不会删除项目设计数据：
+
+```powershell
+npm.cmd run uninstall:codex -- --workspace H:\path\to\project
+```
+
+需要自定义 workspace 或演示数据时使用完整命令：
+
+```powershell
+npm.cmd run build
+npm.cmd run workspace:init -- --workspace <path> --name "My design"
+npm.cmd run seed:demo -- --workspace <path>
+npm.cmd start -- --workspace <path>
+```
+
+`seed:demo` 可省略。服务只绑定 `127.0.0.1`。不传 `--workspace` 时，CLI、MCP 与 Sidecar 都使用当前工作目录；插件模式会直接使用 Codex 提供的项目 `cwd`。
+
+Sidecar 打开后可浏览树、搜索和多选节点、固定约束、检查历史与关系、查看 Agent 焦点、比较候选差异、接管 lease、采用或丢弃候选、确认 root、校验并发布。点击 Working 节点或候选会写入当前项目的“Agent 可见焦点”，但不会自动触发模型调用或设计写入；Agent 通过 `attention_get` 读取 `primaryNodeId/primaryChangeId`，再由 `design_context_get` 获得所选候选的完整结构化内容。读取会解析同一项目最近一次 Sidecar 选择，因此旧标签页和新 Codex 任务的 session 不一致也不会丢失焦点；不同项目仍由独立 workspace 隔离。
+
+候选节点会依据同一 ChangeSet 中尚未采用的 `contains` 关系，以虚线和候选徽标直接投影到设计树的预期位置；没有可解析父节点的候选单独显示为“待定位”。`supports`、`depends_on`、`constrains` 等非层级关系以 `↔` 数量提示。悬停或聚焦右侧关系卡时，左树会分色高亮起点与终点；卡片也直接展示“起点 → 关系类型 → 终点”。
+
+审批采用自上而下的单一路径：根节点可直接批准，其他新节点只有在唯一父节点已进入 Working State 后才能批准。指向新子节点的 `contains` 是附属结构变更，不在右侧重复形成审批卡；批准或丢弃子节点时，节点与该挂载关系在同一 SQLite 事务中一起处理。`supports`、`depends_on` 等语义关系仍单独审查。ChangeSet 仍有任何待处理候选时禁止校验和发布。
+
+项目 Sidecar 的实际端口记录在 `<项目>/.treediagram/sidecar.json`。插件会把已经包含 `host=codex` 与当前 `session` 的完整 URL 注入任务，不需要手工拼接固定端口。
+
+Sidecar 是按项目常驻的独立后台进程，不随浏览器页面、单个 Codex 任务或 stdio MCP 连接关闭；同一项目再次进入时会先进行 workspaceId 绑定的健康检查，健康则复用，失效则重新启动。需要显式结束当前仓库的 Sidecar 时可运行 `npm.cmd run treediagram:stop`；停止过程发送 `SIGTERM`，等待 HTTP 服务关闭并释放 SQLite 后移除进程记录。系统关机或进程异常也会结束服务，设计数据仍保留在项目的 `.treediagram` 目录中。
+
+新会话不会静默继承旧焦点；Sidecar 会显示恢复候选，只有用户明确恢复后才复制 Attention。
+
+## MCP
+
+V2 提供 23 个聚焦工具，覆盖读取、Attention、候选提案、校验和审批动作。所有工具同时返回结构化数据与简洁摘要；可修复错误包含分类、字段路径、期望值、实际值和建议动作。
+
+手工 stdio（默认绑定当前目录）：
+
+```powershell
+$env:TREEDIAGRAM_WORKSPACE = "H:\path\to\project"
+npm run mcp
+```
+
+HTTP：启动项目 Sidecar 后连接其动态 URL 下的 `/mcp`。两种传输使用同一个语义 dispatcher。
+
+Codex 插件位于 [`plugins/treediagram`](./plugins/treediagram)，包含插件清单、stdio MCP 启动器、项目绑定 Hook 与六个 Skills：Initialize、Derive、Grill、Check、Unbox、Re-evaluate。Grill 通过分轮追问厘清决策；Check 负责原 Grill 的一次性压力审查。插件把 MCP UI 当作能力增强；关键人工动作始终可在 Sidecar 完成。
+
+Hermes 的 stdio/HTTP 配置、Skills 安装、会话绑定和兼容矩阵见 [Hermes 兼容说明](./docs/HERMES_COMPATIBILITY.md)。
+
+## 安全与并发边界
+
+- 同一 workspace 同时只有一个活动 ChangeSet，并由一个宿主会话持有写 lease；接管必须是用户显式动作。
+- Agent 只能提出、修订或丢弃候选，不能把聊天文本当成采用或发布授权。
+- Adopt、Publish、Confirm Root、扩大 Delegation 和 Lease Takeover 使用短时、目标绑定、版本绑定、单次消费的 `ApprovalGrant`；数据库只保存 token hash。
+- 所有设计写入、授权消费、发布快照和 Attention 版本更新都在 SQLite transaction 内完成。
+- Sidecar 浏览器写请求限制为同源；MCP 与 Sidecar 默认只在 loopback 暴露。
+- 插件 Hook 与 MCP 不获得绕过 Codex 权限的能力；首次 Hook 信任、缺失依赖时的 npm 网络访问仍遵循 Codex 审批与管理员策略。
+
+精确契约见 [V2_CONTRACTS.md](./docs/V2_CONTRACTS.md)，产品出发点见 [DESIGN_V2.md](./DESIGN_V2.md)，里程碑边界见 [IMPLEMENTATION_PLAN_V2.md](./IMPLEMENTATION_PLAN_V2.md)。
+
+## 质量门禁
 
 ```bash
-npm ci          # 干净安装（CI 门禁基线）
-npm run build   # 构建 packages + server + web
+npm run format:check
+npm run typecheck
+npm test
+npm run test:e2e
+npm run build
 ```
 
-## 初始化工作区
+发布维护者还应运行：
 
 ```bash
-npm run workspace:init -- --path <dir> --name <project-name>
+npm run release:check
+npm run release:verify
 ```
 
-初始化在 `<dir>/.treediagram/` 下生成：
+其中 `release:check` 要求 Git 工作区干净且已经配置 `origin`；完整源码发布步骤见 [发布指南](./docs/RELEASING.md)。
 
-- `state.sqlite`：全部设计状态（节点/关系/ChangeSet/Release/事件/工作流运行）
-- `workspace.json`：工作区元数据
-- `admin-token` / `consumer-token`：两种访问令牌（只打印文件路径，不打印正文）
+测试覆盖领域一致性、V1 workspace 拒绝、Attention 会话隔离与显式恢复、单写 lease、Grant 版本/过期/单次消费、stdio/HTTP MCP、发布闭环和 Sidecar 用户路径。真实模型测试不参与确定性正确性。
 
-可选：载入演示数据 `node scripts/seed-demo.ts --workspace <dir>`。
+## V2 结构
 
-## 运行
-
-快捷启动（推荐）：一条命令完成「初始化（首次）→ 构建（如需）→ 启动服务」。
-
-```bash
-npm start                          # 默认工作区 ./workspace
-npm start -- --workspace <dir>     # 指定工作区
-npm start -- --fake                # 离线演示：确定性假模型，无需 OPENAI_API_KEY
-npm start -- --build               # 强制重新构建
+```text
+packages/contracts       V2 DTO、schema、ToolError 与事件
+packages/domain          领域校验、影响闭包和 digest
+packages/storage-sqlite  V2 schema、workspace、transaction store
+packages/attention       AttentionContext、恢复与 Agent activity
+packages/mcp             共享工具语义、stdio 与 Streamable HTTP
+packages/ui-core         Sidecar 状态与 React 组件
+apps/sidecar             loopback Fastify 服务与常驻三栏 UI
+plugins/treediagram      Codex 插件、Skills 与 MCP 配置
+integrations/hermes      Hermes 传输配置样例
+tests/v2                 unit、integration 与 browser e2e
 ```
 
-手动方式：
+V2 状态位于 `<workspace>/.treediagram/state-v2.sqlite`，元数据位于 `<workspace>/.treediagram/workspace.json`。备份前停止 Sidecar，然后复制整个 `.treediagram` 目录；恢复后重新绑定同一路径即可。
 
-```bash
-TREEDIAGRAM_WORKSPACE=<dir> npm run dev
-# 或 node apps/server/dist/index.js --workspace <dir>
-```
+## 许可证
 
-服务仅绑定 `127.0.0.1`，默认端口 4317。浏览器打开 `http://127.0.0.1:4317/`，
-粘贴 admin token 进入编辑器（树浏览、节点/关系编辑、复核队列、工作流面板）。
-
-环境变量：
-
-| 变量                           | 默认            | 说明                                                                              |
-| ------------------------------ | --------------- | --------------------------------------------------------------------------------- |
-| `TREEDIAGRAM_WORKSPACE`        | —（必填）       | 工作区目录（或 `--workspace <dir>`）                                              |
-| `TREEDIAGRAM_PORT`             | `4317`          | 监听端口                                                                          |
-| `TREEDIAGRAM_MODEL`            | `gpt-5.6-terra` | Agent 工作流模型                                                                  |
-| `OPENAI_API_KEY`               | —               | 真实模型调用凭证；未设置时写接口可用、Agent 工作流返回 422 `MODEL_NOT_CONFIGURED` |
-| `OPENAI_BASE_URL`              | 官方端点        | OpenAI 兼容网关/代理端点                                                          |
-| `TREEDIAGRAM_MODEL_CONFIG`     | 见下节          | 模型 JSON 配置文件路径（或 `--model-config <path>`）                              |
-| `TREEDIAGRAM_MODEL_PROVIDER`   | —               | 设为 `fake` 使用确定性假模型（离线演示/调试）                                     |
-| `TREEDIAGRAM_MODEL_TIMEOUT_MS` | `300000`        | 模型超时（10s–900s）                                                              |
-| `TREEDIAGRAM_MAX_SOURCE_BYTES` | `2097152`       | source 上传上限（只可从默认下调）                                                 |
-| `LOG_LEVEL`                    | `info`          | `debug/info/warn/error`                                                           |
-
-## 模型配置（JSON 文件）
-
-Agent 工作流的模型接入推荐使用 JSON 配置文件。默认路径
-`<workspace>/.treediagram/model.json`（与 token 同目录，启动时自动加载）；
-也可用 `--model-config <path>` 或 `TREEDIAGRAM_MODEL_CONFIG` 指定其他位置。
-
-```json
-{
-  "provider": "openai",
-  "apiKey": "sk-...",
-  "baseUrl": "https://your-gateway.example.com/v1",
-  "model": "gpt-5.6-terra",
-  "timeoutMs": 300000,
-  "outputTokens": {
-    "readiness": 8192,
-    "proposal": 16384,
-    "initialize": 32768,
-    "repair": 32768,
-    "retryCeiling": 65536
-  }
-}
-```
-
-- `provider`：`openai`（默认，需 `apiKey`）或 `fake`（离线演示，不得再设 `apiKey/baseUrl`）；
-- `baseUrl`：可选，指向任何 OpenAI 兼容端点（网关/代理/自托管）；
-- `model`、`timeoutMs`：可选，覆盖对应环境变量；
-- `outputTokens`：可选的阶段预算覆盖。默认 Initialize/修复为 32K，普通提案 16K，就绪评估 8K；
-  provider 明确以 `max_output_tokens` 截断时自动把当次预算加倍重试一次，但不超过 `retryCeiling`；
-- 合并优先级：**配置文件 > 环境变量 > 默认值**；配置文件只含部分字段时，其余字段回退到环境变量；
-- 文件是敏感数据：启动日志只打印 provider 名称与 baseUrl，绝不打印 `apiKey`；
-- 文件不合法（JSON 错误/未知字段/非法值）会在启动时给出带路径的明确错误并拒绝启动。
-
-## 备份与恢复
-
-所有状态都在 `<dir>/.treediagram/` 内。备份步骤：
-
-1. 停止服务（保证 SQLite 无在途写事务）；
-2. 复制 `.treediagram/state.sqlite` 与 `.treediagram/workspace.json`（token 文件按需）；
-3. 恢复时放回原路径，重新启动服务即可。
-
-重启恢复是设计内能力：开放 ChangeSet 与候选 head 原样保留；遗留 `running`
-状态的 WorkflowRun 在启动时被标记 `failed(PROCESS_INTERRUPTED)`，可通过
-`POST /api/v1/workflows/:id/resume` 从本地 checkpoint 幂等续跑（不依赖供应商会话）。
-
-每个工作流先做独立的就绪评估。关键歧义、待决策和外部依赖会成为带稳定 ID、生命周期和
-执行门位置的 `workflow_issue`，并在任何提案写入前进入 `waiting_user`。Workflow 面板会自动展开
-任务对话；用户回答后，服务端以原始上下文、本地对话、Issue 账本和附件重新运行同一阶段。
-HTTP 客户端可使用：
-
-- `GET /api/v1/workflows/:id/messages` 读取对话、当前开放等待与 Issue 账本；
-- `POST /api/v1/workflows/:id/respond` 提交幂等回答并继续；
-- `POST /api/v1/workflows/:id/retry` 仅重试 `failed` 运行。
-
-聊天回答不会隐式确认 root、发布 Release 或修改托管策略；这些仍是显式用户操作。
-提案写入前还会投影到内存 WorkingSet 并运行一致性检查：新增的硬结构错误最多自动回修两次，
-仍失败则整个提案不落库；需要用户判断的问题重新进入 Issue 门。Initialize 写入 tentative root 后
-会停在“等待审批”，直到用户把根节点 revise 为 `user_confirmed` 并在面板触发重新检查。
-
-Workflow 面板可展开“模型记录”：请求发出前即写入当前阶段（就绪评估、完整提案、自动修复）、
-开始时间、模型与推理档位，完成后补充最终结构化响应、responseId 和 token
-用量。记录只对 admin 开放，密钥字段会脱敏，源码/上下文/响应会截断，不包含模型内部思维链。
-每次运行最多保留最近 50 条调用记录。
-
-## 下游读取（consumer）
-
-下游系统使用 consumer token 做只读增量同步：
-
-- `GET /api/v1/status` 与 `GET /api/v1/events?after=<cursor>&limit=<n>` **始终可读**——
-  用事件 cursor 轮询等待 `release.published`；
-- `GET /api/v1/release/current`、`GET /api/v1/tree?view=release`、`GET /api/v1/query?view=release`
-  仅在 project = `consistent` 时可用；`initializing` 返回 423 `DESIGN_NOT_INITIALIZED`，
-  `reevaluating/blocked` 返回 423 `DESIGN_NOT_CONSISTENT`；
-- working 视图、历史、写接口对 consumer 一律 403，无绕过路径。
-
-详见 [API 契约 §2/§3.3](./docs/API_CONTRACT.md)。
-
-## 测试与质量门禁
-
-```bash
-npm run format            # prettier
-npm run typecheck         # 全部 tsconfig 严格检查
-npm test                  # vitest：unit + integration（FakeModelProvider，确定性）
-npm run test:e2e          # Playwright 贯穿场景；有 OPENAI_API_KEY 时追加真实模型 UI 闭环
-npm run test:model-smoke  # 4 个真实 OpenAI 兼容端点测试（需 OPENAI_API_KEY）
-```
-
-验收状态：
-
-- 单元 + 集成套件覆盖全部工作流，并以 FakeModelProvider 确定性验证；
-- 6 个确定性 Playwright 场景通过；配置真实模型后，第 7 个场景会经浏览器和真实 server
-  调用模型并完成 Derive → Adopt → Review → Publish；
-- 贯穿验收（V1_SPEC §15 的 11 步 dogfooding 场景）由
-  `tests/integration/m5-acceptance.test.ts` 全程通过 API 完成，无需直接编辑数据库；
-- 5,000 节点 / 20,000 关系规模测试、工作区重启恢复测试通过（`tests/integration/m1-kernel.test.ts`）；
-- 4 个真实 OpenAI 兼容端点测试覆盖：Initialize 就绪评估与完整投影、Core 全生命周期
-  （Derive 等待/回答 → Grill → Unbox → Adopt → Re-evaluate → Publish）、HTTP API 闭环、
-  在途请求取消；未提供 `OPENAI_API_KEY` 时自动跳过，设置后运行
-  `npm run test:model-smoke` 复验当前模型行为。
-
-## 仓库结构
-
-```
-packages/contracts   共享类型/枚举/schema（Single Source of Truth）
-packages/core        SQLite 持久化、领域规则、服务层、Agent 工作流执行器
-apps/server          Fastify HTTP API + 静态托管（仅 127.0.0.1）
-apps/web             React 编辑器 UI
-scripts/             工作区初始化 / demo 种子 / Release 校验
-tests/               unit / integration / e2e / model-smoke
-```
+TreeDiagram 依据 [Apache License 2.0](./LICENSE) 发布。贡献代码默认按同一许可证提供；第三方依赖继续适用各自的许可证。

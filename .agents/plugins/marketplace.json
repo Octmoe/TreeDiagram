@@ -1,0 +1,20 @@
+{
+  "name": "treediagram-local",
+  "interface": {
+    "displayName": "TreeDiagram Local"
+  },
+  "plugins": [
+    {
+      "name": "treediagram",
+      "source": {
+        "source": "local",
+        "path": "./plugins/treediagram"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

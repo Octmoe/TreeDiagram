@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-web/
 *.tsbuildinfo
 .env
 .treediagram/
@@ -14,3 +15,5 @@ coverage/
 workspace/
 .tmp-probe/
 *.log
+plugins/treediagram/runtime.local.json
+plugins/treediagram/.mcp.json

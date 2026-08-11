@@ -1,0 +1,8 @@
+node_modules/
+**/dist/
+**/dist-web/
+archive/
+.tmp-probe/
+playwright-report/
+test-results/
+coverage/

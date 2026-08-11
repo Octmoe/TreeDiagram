@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Check TreeDiagram'
+  short_description: 'Audit the focused branch for evidence and risks'
+  default_prompt: 'Use $treediagram-check to audit the current TreeDiagram focus without changing it.'

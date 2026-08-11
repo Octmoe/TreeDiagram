@@ -29,7 +29,7 @@ TreeDiagram V2 是一个面向 AI Agent 协作的持久设计空间。
 ### 1.2 非目标
 
 - 不再实现通用聊天客户端或模型供应商适配层。
-- 不再把 Initialize、Derive、Grill、Unbox、Re-evaluate 固化为服务端运行状态机。
+- 不再把 Initialize、Derive、Grill、Check、Unbox、Re-evaluate 固化为服务端运行状态机。
 - 不要求 Agent 一次生成完整设计树或大型结构化项目投影。
 - 不把节点选择等同于立即调用模型。
 - 不把聊天记录复制为 TreeDiagram 的第二份会话真相源。
@@ -41,11 +41,11 @@ TreeDiagram V2 是一个面向 AI Agent 协作的持久设计空间。
 
 V2 不是“聊天主、树辅”，也不是“树主、聊天辅”。两者承担不同且不可替代的职责：
 
-| 交互面 | 负责 | 不负责 |
-| --- | --- | --- |
-| 宿主聊天 | 意图表达、追问、解释、推理、任务连续性 | 长期设计真相、修订治理 |
+| 交互面     | 负责                                             | 不负责                         |
+| ---------- | ------------------------------------------------ | ------------------------------ |
+| 宿主聊天   | 意图表达、追问、解释、推理、任务连续性           | 长期设计真相、修订治理         |
 | 常驻设计树 | 空间定位、状态对齐、范围选择、差异检查、人工确认 | 自建模型循环、替代自然语言讨论 |
-| MCP | 查询、上下文装配、受控提案、校验、同步 | 决定用户意图、隐藏执行权限 |
+| MCP        | 查询、上下文装配、受控提案、校验、同步           | 决定用户意图、隐藏执行权限     |
 
 ### 2.2 TreeDiagram 是状态服务，不是上层 Harness
 
@@ -91,6 +91,11 @@ V2 采用 **Codex-first，Hermes-second**：
 - Host Adapter 可以使用宿主增强能力，但 Domain、Attention 和 MCP 工具不得按产品名分支。
 
 该策略选择的是开发和验证顺序，不表示 TreeDiagram 成为 Codex 专属产品。
+
+Codex Host Adapter 以 `SessionStart.cwd` 作为 workspace 绑定根，而不是使用全局默认目录或固定
+`workspace-v2`。项目事实保存在 `<cwd>/.treediagram`；任务标识只参与 Attention 与 lease 身份，不参与
+项目路径选择。插件 Hook 负责幂等初始化和 Sidecar 可用性，Codex 托管的 stdio MCP 子进程负责工具
+生命周期。Sidecar 端口按项目稳定派生并在冲突时后移，因此多个项目可以同时运行而不共享设计状态。
 
 ## 3. 总体架构
 
@@ -142,12 +147,12 @@ MCP App 或独立 Sidecar 运行。
 
 V2 必须避免再次把会话状态、工作流状态和设计状态混合。
 
-| 状态 | 权威持有者 | 生命周期 |
-| --- | --- | --- |
-| Conversation State | 宿主 Harness | 宿主会话 |
-| Attention State | TreeDiagram Attention Service | 会话/客户端作用域，可恢复 |
-| Working Design State | TreeDiagram ChangeSet | 跨会话持久化，直到采用或放弃 |
-| Released Design State | TreeDiagram Release | 长期稳定、可供下游消费 |
+| 状态                  | 权威持有者                    | 生命周期                     |
+| --------------------- | ----------------------------- | ---------------------------- |
+| Conversation State    | 宿主 Harness                  | 宿主会话                     |
+| Attention State       | TreeDiagram Attention Service | 会话/客户端作用域，可恢复    |
+| Working Design State  | TreeDiagram ChangeSet         | 跨会话持久化，直到采用或放弃 |
+| Released Design State | TreeDiagram Release           | 长期稳定、可供下游消费       |
 
 聊天中形成的想法只有在 Agent 或用户明确创建提案后才进入 Working Design State。选择节点只改变
 Attention State，不修改设计事实。
@@ -169,11 +174,13 @@ interface AttentionContext {
   hostSessionRef?: string;
   clientRef: string;
   primaryNodeId?: string;
+  primaryChangeId?: string;
   selectedNodeIds: string[];
+  selectedChangeIds: string[];
   pinnedNodeIds: string[];
-  scope: "node" | "subtree" | "related" | "comparison";
+  scope: 'node' | 'subtree' | 'related' | 'comparison';
   intentHint?: string;
-  updatedBy: "user" | "agent";
+  updatedBy: 'user' | 'agent';
   version: number;
   updatedAt: string;
 }
@@ -182,7 +189,7 @@ interface AttentionContext {
 ### 5.2 语义区分
 
 - **Selected**：UI 当前选择，允许频繁变化。
-- **Primary Focus**：下一条用户消息默认指向的主要节点。
+- **Primary Focus**：下一条用户消息默认指向的主要 Working 节点或候选变更。
 - **Pinned**：任务期间必须纳入上下文的节点，不随普通选择变化。
 - **Scope**：Agent 当前读取或提出变更的结构范围。
 - **Agent Focus**：Agent 本轮实际读取/操作的位置，与用户选择分别显示。
@@ -193,32 +200,36 @@ interface AttentionContext {
 
 > 选择即设定上下文，发言或明确动作才触发 Agent 工作。
 
-单击节点不自动产生模型调用。树 UI 应在聊天输入区域或自身顶部清楚显示当前焦点。用户可以：
+单击节点或候选不自动产生模型调用，但会写入当前项目的“Agent 可见焦点”。树 UI 应明确标记该选择可由 Agent 通过 `attention_get` 读取。用户可以：
 
 - 选择一个节点作为焦点；
-- 多选节点进行比较；
+- 选择候选节点或关系，要求 Agent 优先解释、修订或继续推导该候选；
+- 跨节点和候选多选比较；
 - 固定根目标、约束或证据；
 - 把工作范围限制为节点、子树或关联图；
 - 点击“围绕此节点继续”等明确动作生成宿主消息。
 
 ### 5.4 并发与隔离
 
-Attention Context 默认按宿主会话和客户端隔离，不能使用一个全局 `selectedNodeId`。多个 Agent 或窗口
-可以同时查看同一设计空间而不覆盖彼此焦点。
+Attention Context 的写入按 workspace 和宿主会话隔离，不能使用一个跨项目的全局 `selectedNodeId`。Sidecar 与 Agent 使用命名通道：Codex 为 `clientRef: "codex-agent"`，Hermes 为 `clientRef: "hermes-agent"`。Agent 读取该命名通道时，在当前 workspace 内解析同一 hostKind 最近更新的 Context，因此旧 Sidecar 标签页与新任务的 `hostSessionRef` 不一致时仍能确定性读取用户最后标记的焦点；不同项目仍完全隔离。
 
 设计变更通过 ChangeSet 和乐观并发控制协调；注意力冲突不应升级为设计冲突。
 
 ### 5.5 生命周期与恢复
 
+设计事实的人工查看不得依赖一次 Agent 会话。宿主 Hook 和 MCP 启动器负责会话内的自动恢复，但产品还必须提供宿主之外的独立打开入口：用户选择一个已有项目后，入口只验证现有 workspace、幂等恢复该项目 Sidecar 并打开浏览器；它不得隐式创建 workspace、启动模型调用或生成 ChangeSet。这样用户可以在决定是否继续对话之前先阅读设计树，同时仍由项目路径和 workspaceId 保证隔离。
+
 Attention 使用分层生命周期：
 
-| 字段/状态 | 作用域 | 恢复规则 |
-| --- | --- | --- |
-| `selectedNodeIds` | UI client | 页面刷新后恢复；客户端长期失活后过期 |
-| `primaryNodeId` | host session | 同一宿主会话自动恢复 |
-| `pinnedNodeIds` | host session | 持续到用户明确取消 |
-| `scope` | host session | 同一任务自动恢复 |
-| `agentFocus` | 单轮工具活动 | 调用结束后转为短期活动记录 |
+| 字段/状态           | 作用域       | 恢复规则                                |
+| ------------------- | ------------ | --------------------------------------- |
+| `selectedNodeIds`   | host session | UI 独立恢复；Agent 读取项目最新命名通道 |
+| `selectedChangeIds` | host session | UI 独立恢复；Agent 读取项目最新命名通道 |
+| `primaryNodeId`     | host session | 同一宿主会话自动恢复                    |
+| `primaryChangeId`   | host session | 同一宿主会话自动恢复                    |
+| `pinnedNodeIds`     | host session | 持续到用户明确取消                      |
+| `scope`             | host session | 同一任务自动恢复                        |
+| `agentFocus`        | 单轮工具活动 | 调用结束后转为短期活动记录              |
 
 Attention 的身份键至少包含 `workspaceId + hostKind + hostSessionRef + clientRef`。
 
@@ -244,7 +255,8 @@ Attention 固定。
 
 - 围绕此节点继续；
 - 从这里向下推导；
-- 质疑此分支；
+- 追问我厘清此分支；
+- 检查此分支；
 - 比较所选节点；
 - 查找遗漏依赖；
 - 解释候选变更；
@@ -283,17 +295,26 @@ V1 的工作流名称可以保留为可组合 Skills，但不再拥有固定服�
 
 ### 7.3 Grill Skill
 
-- 默认只读分析；
-- 将问题作为聊天结论、诊断标记或候选节点提出；
-- 不因发现问题而把任务标记为技术失败。
+交互语义参考 [`mattpocock/skills` 的 grilling primitive](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md)，并适配 TreeDiagram 的 Attention、ChangeSet 和 ApprovalGrant 边界：
 
-### 7.4 Unbox Skill
+- 把当前计划、决策或想法建模为对话中的决策树；
+- 按依赖已满足的“问题前沿”分轮追问，每题给出 Agent 推荐答案并等待用户裁决；
+- 可从代码、工具和设计状态查到的事实由 Agent 自行查找，不把事实检索转嫁给用户；
+- 所有重要分支走完且用户确认共同理解之前，不执行实现、不写入设计候选。
+
+### 7.4 Check Skill
+
+- 对当前焦点执行一次性只读审查，输出证据缺口、矛盾、薄弱决策、冲突约束和遗漏风险；
+- 用户只要求检查时不写入；明确要求记录时才形成小步问题、风险、约束、验证方法或语义关系候选；
+- 不因发现设计问题而把任务标记为技术失败。
+
+### 7.5 Unbox Skill
 
 - 在用户明确要求重新打开设计空间时使用；
 - 先改变问题边界，再形成结构化候选；
 - 不把普通失败重试伪装成 Unbox。
 
-### 7.5 Re-evaluate Skill
+### 7.6 Re-evaluate Skill
 
 - 由已采用的高影响变更或用户意图触发；
 - 读取确定性影响闭包；
@@ -378,7 +399,7 @@ TreeDiagram 不接受“Agent 声称用户已经同意”作为高权限操作�
 interface ApprovalGrant {
   id: string;
   workspaceId: string;
-  action: "adopt" | "publish" | "confirm_root" | "expand_delegation";
+  action: 'adopt' | 'publish' | 'confirm_root' | 'expand_delegation';
   targetDigest: string;
   expectedVersion: number;
   hostSessionRef?: string;
@@ -396,13 +417,13 @@ Grant 与动作、目标内容摘要和版本绑定，内容发生变化后立�
 
 V2 不再以一个 WorkflowRun 的 `failed` 代表所有异常。每次工具调用返回以下错误类别之一：
 
-| 类别 | 处理者 | 示例 |
-| --- | --- | --- |
-| `agent_recoverable` | Agent 可调整参数并重试 | Schema、字段缺失、变更过大 |
-| `user_input_required` | Agent 在聊天中询问用户 | 目标模糊、候选冲突需取舍 |
-| `state_conflict` | Agent 刷新状态后重放或合并 | revision/version 已变化 |
-| `permission_required` | 宿主或 Tree UI 请求确认 | 根部变更、发布、扩大托管范围 |
-| `infrastructure_failure` | 系统报告并允许重试 | 数据库不可用、MCP 连接中断 |
+| 类别                     | 处理者                     | 示例                         |
+| ------------------------ | -------------------------- | ---------------------------- |
+| `agent_recoverable`      | Agent 可调整参数并重试     | Schema、字段缺失、变更过大   |
+| `user_input_required`    | Agent 在聊天中询问用户     | 目标模糊、候选冲突需取舍     |
+| `state_conflict`         | Agent 刷新状态后重放或合并 | revision/version 已变化      |
+| `permission_required`    | 宿主或 Tree UI 请求确认    | 根部变更、发布、扩大托管范围 |
+| `infrastructure_failure` | 系统报告并允许重试         | 数据库不可用、MCP 连接中断   |
 
 错误响应至少包含：
 
@@ -410,11 +431,11 @@ V2 不再以一个 WorkflowRun 的 `failed` 代表所有异常。每次工具调
 interface ToolError {
   code: string;
   category:
-    | "agent_recoverable"
-    | "user_input_required"
-    | "state_conflict"
-    | "permission_required"
-    | "infrastructure_failure";
+    | 'agent_recoverable'
+    | 'user_input_required'
+    | 'state_conflict'
+    | 'permission_required'
+    | 'infrastructure_failure';
   message: string;
   path?: string;
   expected?: unknown;
@@ -440,6 +461,16 @@ Agent 连续产生低质量结果不是基础设施失败。它可以继续解�
 5. **确认区**：接受、拒绝、编辑、要求解释；
 6. **活动提示**：Agent 正在读取或提出变更的位置，不展示私有思维链。
 
+候选不是与设计树分离的扁平队列。UI 必须把尚未采用的节点和 `contains` 关系投影到预期树位置，使用虚线、候选徽标和候选关系提示与 Working State 区分；修订与移除候选直接标记在现有节点上。只有缺少可解析父节点的候选才进入“待定位”分组。非层级候选关系以数量和端点摘要提示，不强行伪装成树边。当用户悬停、聚焦或从树上打开关系候选时，树必须分色高亮起点和终点，候选卡则直接展示可读的端点路径。
+
+审批面向用户呈现为自上而下的节点决策；`contains` 仍是独立领域实体和审计记录，但指向同一 ChangeSet 新节点的挂载关系从属于该子节点。依赖图使用以下确定性规则：
+
+1. `create_relation` 只能引用 Working 节点或同一 ChangeSet 中的 `create_node` 候选；
+2. 根节点可直接采用；非根 `create_node` 必须有且仅有一个指向自己的 proposed `contains`，并且该关系的父节点已经进入 Working State；
+3. 采用或丢弃新子节点时，节点与其 `contains` 挂载在同一事务中原子处理，ChangeSet version 只递增一次；该 `contains` 不形成独立用户审批项；
+4. 指向 proposed 新节点的 `contains` 不能独立采用；现有节点的结构调整以及所有非层级语义关系仍是独立变更，只有端点都在 Working State 时才能采用；
+5. UI 必须禁用尚未轮到的子节点并显示待批准父节点；存在 proposed 变更时不能校验或发布，一致性校验同时要求每个非根节点都有唯一 `contains` 父节点。
+
 不再提供 Workflow 类型下拉框和内部聊天历史面板。自然语言入口属于宿主。
 
 ### 10.2 MCP App 与 Sidecar
@@ -451,6 +482,11 @@ Sidecar 是 V2 首发和验收基线；MCP App 是共享前端核心上的第二
 - MCP App 模式通过标准桥接接收工具输入/结果、调用工具和发送后续消息；
 - 两种模式订阅相同事件并渲染相同 Attention Context；
 - 宿主私有状态只能作为增强缓存，不能成为权威状态。
+
+Sidecar 后台进程不是 MCP 生命周期的子进程：Hook 或 MCP 启动器只负责启动/健康检查后退出，Sidecar
+按 workspace 幂等复用并继续服务人工审查。进程记录和动态 URL 属于该项目的本地运行元数据；SQLite
+中的 workspaceId 仍是权威隔离标识。插件不能绕过宿主权限，Hook 信任与首次缺失依赖安装继续服从
+Codex 的审批和管理员策略。
 
 首版必须在没有嵌入式 UI 的条件下完成全部人工确认和焦点交互。宿主提供 fullscreen、picture-in-picture、
 消息桥接或状态缓存时，通过能力探测逐项启用，不根据宿主名称硬编码行为。
@@ -582,7 +618,7 @@ V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成�
 3. Agent 分批提出根目标、约束和假设，常驻树实时出现候选。
 4. 用户在树中选择一个约束，聊天输入区域显示该焦点。
 5. 用户说“检查这个限制是否过早”。
-6. Agent 自动读取焦点上下文并使用 Grill/Unbox 方法分析。
+6. Agent 自动读取焦点上下文，使用 Grill 追问澄清，或使用 Check/Unbox 方法分析。
 7. Agent 的第一次提案 Schema 不合法时，工具返回字段级错误，Agent 自行修正。
 8. 用户多选两个候选节点并要求比较，Agent 获得 comparison scope。
 9. 用户在树中确认选定变更，未确认变更继续保留在 ChangeSet。
@@ -609,14 +645,14 @@ V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成�
 
 ### 18.1 已收敛
 
-| 事项 | 决定 |
-| --- | --- |
-| 首个宿主 | Codex-first，Hermes-second |
-| 常驻 UI | Sidecar-first，Embedded-enhanced |
-| Attention 恢复 | 同会话自动恢复；跨会话必须由用户明确恢复 |
-| ChangeSet 并发 | V2 首版一个活动 ChangeSet、一个写入 lease |
-| 用户确认 | 一次性、目标绑定、版本绑定的 ApprovalGrant |
-| V1 数据 | 不迁移、不兼容；V2 作为全新产品和全新 workspace |
+| 事项           | 决定                                            |
+| -------------- | ----------------------------------------------- |
+| 首个宿主       | Codex-first，Hermes-second                      |
+| 常驻 UI        | Sidecar-first，Embedded-enhanced                |
+| Attention 恢复 | 同会话自动恢复；跨会话必须由用户明确恢复        |
+| ChangeSet 并发 | V2 首版一个活动 ChangeSet、一个写入 lease       |
+| 用户确认       | 一次性、目标绑定、版本绑定的 ApprovalGrant      |
+| V1 数据        | 不迁移、不兼容；V2 作为全新产品和全新 workspace |
 
 ### 18.2 延后到 V2 首版之后
 

@@ -1,0 +1,5 @@
+mcp_servers:
+  treediagram:
+    url: 'http://127.0.0.1:4317/mcp'
+    enabled: true
+    supports_parallel_tool_calls: false

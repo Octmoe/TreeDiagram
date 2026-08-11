@@ -1,0 +1,26 @@
+{
+  "name": "treediagram",
+  "version": "2.0.0-alpha.1",
+  "description": "Project-isolated design-state tools, automatic Sidecar startup, and guided agent workflows.",
+  "author": {
+    "name": "TreeDiagram contributors"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["design", "architecture", "decision-records", "codex", "mcp"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "TreeDiagram",
+    "shortDescription": "Keep agent-assisted design visible and reviewable.",
+    "longDescription": "TreeDiagram automatically binds each Codex project to its own persistent design tree and Sidecar, with shared attention, reviewable ChangeSets, deterministic validation, and approval-gated releases.",
+    "developerName": "TreeDiagram contributors",
+    "category": "Productivity",
+    "capabilities": ["Project-isolated MCP tools", "Automatic Sidecar", "Approval-gated writes"],
+    "defaultPrompt": [
+      "Initialize this project as a reviewable TreeDiagram design.",
+      "Grill me with questions about the currently focused TreeDiagram plan.",
+      "Check the currently focused TreeDiagram branch for evidence gaps and risks."
+    ],
+    "brandColor": "#8B7CF6"
+  },
+  "mcpServers": "./.mcp.json"
+}

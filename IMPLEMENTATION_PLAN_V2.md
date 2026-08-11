@@ -1,8 +1,8 @@
 # TreeDiagram V2 实施计划
 
-> 状态：实施基线
+> 状态：V2 参考实现已完成
 >
-> 日期：2026-08-09
+> 基线日期：2026-08-09；完成日期：2026-08-10
 >
 > 产品设计：[DESIGN_V2.md](./DESIGN_V2.md)
 
@@ -15,6 +15,14 @@ V2 按全新产品开发：
 - 不复用 V1 Workflow、模型 Provider、聊天或重试状态机；
 - 旧源码只能作为参考或经测试提取的代码来源；
 - 每个里程碑从无头能力开始，再增加 Sidecar 和宿主增强。
+
+### 实施结果与计划调整
+
+- M0 的三份精确契约已作为实现门禁直接纳入 contracts、领域事务和 contract tests，不再保留独立的前置讨论阶段；
+- stdio、HTTP、Sidecar REST 共用一个 `ToolService`，以代码边界保证跨传输与跨宿主语义一致；
+- Sidecar 是全部人工审批能力的完整基线；MCP Apps 只在宿主实际暴露该能力时渐进启用，不作为首个跨宿主版本的阻塞门；
+- Codex 是参考宿主，Hermes 通过标准 MCP、标准 Skills 和会话标识适配，不向 Domain 增加宿主分支；
+- V1 继续只保留归档引用，V2 workspace 对 V1 输入明确拒绝且不修改。
 
 ## 2. 目标代码边界
 
@@ -34,6 +42,7 @@ skills/
   initialize/
   derive/
   grill/
+  check/
   unbox/
   reevaluate/
 ```
@@ -51,6 +60,7 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 
 ### 交付
 
+- 固化 V2 Domain、MCP/ToolError、Attention/Lease/Grant 三份精确契约（见 `docs/V2_CONTRACTS.md`）；
 - 建立 V2 package graph 与应用入口；
 - 建立全新 workspace 标识和空数据库创建流程；
 - 删除 V2 默认启动路径对 V1 apps/packages 的引用；
@@ -59,6 +69,7 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 
 ### 完成条件
 
+- 三份契约可由 contract tests 直接验证，不再作为里程碑之外的隐式门禁；
 - 新用户可以初始化空 V2 workspace；
 - V2 build/test 不构建 V1 Workflow Runner；
 - 向 V2 传入 V1 workspace 时明确返回 `UNSUPPORTED_WORKSPACE_VERSION`，不做修改。
@@ -146,9 +157,11 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 ### 交付
 
 - TreeDiagram Codex 插件清单；
-- MCP Server 安装和启动配置；
-- Initialize、Derive、Grill、Unbox、Re-evaluate Skills；
-- Sidecar 启动/打开能力；
+- Codex 托管的 stdio MCP Server 安装和启动配置；
+- Initialize、Derive、Grill、Check、Unbox、Re-evaluate Skills；
+- `SessionStart` 项目绑定、初始化诊断与 Sidecar 启动/打开能力；
+- 独立于 Agent 会话的人类启动器，可选择已有项目、冷启动 Sidecar 并直接打开设计树，且误选目录时不得初始化新 workspace；
+- 按项目隔离的 SQLite、动态 loopback 端口和幂等后台进程复用；
 - Codex HostSessionRef 与 Attention 绑定；
 - 在可用表面上的 MCP Apps UI 增强。
 
@@ -157,6 +170,9 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 - 用户不选择 Workflow 类型，只通过节点焦点和自然语言完成贯穿场景；
 - Agent 可以多轮澄清、分批提案并修复可恢复工具错误；
 - Sidecar 始终能完成嵌入式 UI 不可用时的全部人工操作；
+- 插件完成一次安装和 Hook 信任后，新项目无需手动 npm、固定端口或显式 workspace 参数；
+- 电脑重启后，用户无需创建或恢复 AI 会话即可打开任一已有项目的设计树；
+- 两个同时打开的 Codex 项目拥有不同 workspaceId、数据库与 Sidecar 端口，同一项目重复启动只复用本项目进程；
 - 所有 Codex 增强通过 capability detection 启用。
 
 ## 9. M6：Hermes 兼容门禁
@@ -199,7 +215,7 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 - 仅某一个宿主可用的领域工具；
 - 无目标绑定的长期授权 token。
 
-## 12. 开工门禁
+## 12. 开工门禁（已并入 M0）
 
 进入代码实现前只需补完三份精确契约：
 
@@ -207,4 +223,4 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 2. MCP Tool Contract 与 ToolError Contract；
 3. Attention/Lease/ApprovalGrant 的存储和事务边界。
 
-三份契约确认后从 M0 开始，不再讨论 V1 数据如何迁移。
+三份契约由 `docs/V2_CONTRACTS.md` 固化并纳入 M0 与 contract tests；不再讨论 V1 数据如何迁移。

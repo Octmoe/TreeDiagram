@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Derive in TreeDiagram'
+  short_description: 'Expand the focused branch with small proposals'
+  default_prompt: 'Use $treediagram-derive to expand the current TreeDiagram focus with small proposals.'
