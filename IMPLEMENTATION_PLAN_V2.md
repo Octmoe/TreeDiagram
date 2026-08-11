@@ -11,9 +11,9 @@
 V2 按全新产品开发：
 
 - 只支持新建 V2 workspace；
-- 不读取、迁移或兼容 V1 workspace；
-- 不复用 V1 Workflow、模型 Provider、聊天或重试状态机；
-- 旧源码只能作为参考或经测试提取的代码来源；
+- 不读取、迁移或兼容旧格式 workspace；
+- 不复用前代 Harness 的 Workflow、模型 Provider、聊天或重试状态机；
+- 历史源码只通过归档标签查阅；
 - 每个里程碑从无头能力开始，再增加 Sidecar 和宿主增强。
 
 ### 实施结果与计划调整
@@ -22,7 +22,7 @@ V2 按全新产品开发：
 - stdio、HTTP、Sidecar REST 共用一个 `ToolService`，以代码边界保证跨传输与跨宿主语义一致；
 - Sidecar 是全部人工审批能力的完整基线；MCP Apps 只在宿主实际暴露该能力时渐进启用，不作为首个跨宿主版本的阻塞门；
 - Codex 是参考宿主，Hermes 通过标准 MCP、标准 Skills 和会话标识适配，不向 Domain 增加宿主分支；
-- V1 继续只保留归档引用，V2 workspace 对 V1 输入明确拒绝且不修改。
+- 前代实现只保留归档引用，V2 workspace 对旧格式输入明确拒绝且不修改。
 
 ## 2. 目标代码边界
 
@@ -63,16 +63,16 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 - 固化 V2 Domain、MCP/ToolError、Attention/Lease/Grant 三份精确契约（见 `docs/V2_CONTRACTS.md`）；
 - 建立 V2 package graph 与应用入口；
 - 建立全新 workspace 标识和空数据库创建流程；
-- 删除 V2 默认启动路径对 V1 apps/packages 的引用；
+- 删除 V2 默认启动路径对历史 apps/packages 的引用；
 - 配置 format、lint、typecheck、unit 和 e2e 基线；
-- 为 V1 源码保留 Git 归档引用，不建立运行时兼容层。
+- 为前代源码保留 Git 归档引用，不建立运行时兼容层。
 
 ### 完成条件
 
 - 三份契约可由 contract tests 直接验证，不再作为里程碑之外的隐式门禁；
 - 新用户可以初始化空 V2 workspace；
-- V2 build/test 不构建 V1 Workflow Runner；
-- 向 V2 传入 V1 workspace 时明确返回 `UNSUPPORTED_WORKSPACE_VERSION`，不做修改。
+- V2 build/test 不构建已归档的 Workflow Runner；
+- 向 V2 传入旧格式 workspace 时明确返回 `UNSUPPORTED_WORKSPACE_VERSION`，不做修改。
 
 ## 4. M1：Design State Core
 
@@ -207,7 +207,7 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 
 ## 11. 首版不进入
 
-- V1 数据迁移或兼容读取；
+- 旧格式数据迁移或兼容读取；
 - 多 Draft ChangeSet 和自动合并；
 - 多用户远程协作；
 - TreeDiagram 自己调用模型；
@@ -223,4 +223,4 @@ Domain 不得依赖 MCP、HTTP、React、Codex、Hermes 或宿主会话对象。
 2. MCP Tool Contract 与 ToolError Contract；
 3. Attention/Lease/ApprovalGrant 的存储和事务边界。
 
-三份契约由 `docs/V2_CONTRACTS.md` 固化并纳入 M0 与 contract tests；不再讨论 V1 数据如何迁移。
+三份契约由 `docs/V2_CONTRACTS.md` 固化并纳入 M0 与 contract tests；不再讨论旧格式数据如何迁移。

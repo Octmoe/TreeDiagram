@@ -76,4 +76,4 @@ Do not upload `node_modules`, `dist`, `.treediagram`, SQLite databases, `.mcp.js
 - Roll back by checking out the previous tag and reinstalling it.
 - V2 project data stays under each project's `.treediagram` directory. Plugin removal must preserve
   it unless the user explicitly deletes that data.
-- V1 workspaces are not migrated or read by V2; the archive tag remains the recovery boundary.
+- Legacy workspaces are not migrated or read by V2; the archive tag remains the recovery boundary.

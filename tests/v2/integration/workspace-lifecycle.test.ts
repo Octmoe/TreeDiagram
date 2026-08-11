@@ -19,8 +19,8 @@ afterEach(() => {
 });
 
 describe('V2 workspace lifecycle', () => {
-  it('refuses a V1 workspace without modifying it', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'treediagram-v1-guard-'));
+  it('refuses a legacy workspace without modifying it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'treediagram-legacy-guard-'));
     tempDirs.push(dir);
     const stateDir = join(dir, '.treediagram');
     mkdirSync(stateDir);

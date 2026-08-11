@@ -9,6 +9,12 @@ validated outside the original development machine.
 ### Added
 
 - Git source-release workflow, Apache-2.0 licensing, release checks, and continuous integration.
+- A V2 user manual and copy-paste Codex-assisted installation flow.
+
+### Removed
+
+- Archived standalone harness source, tests, model configuration, and specifications from the active
+  V2 tree. The immutable archive tag remains available for recovery.
 
 ## [2.0.0-alpha.1] - 2026-08-11
 
@@ -25,7 +31,7 @@ validated outside the original development machine.
 
 ### Changed
 
-- V2 is a clean-start product boundary and does not migrate or read V1 workspaces.
+- V2 is a clean-start product boundary and does not migrate or read legacy workspaces.
 
 ### Security
 

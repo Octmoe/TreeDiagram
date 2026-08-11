@@ -1,23 +1,23 @@
-# V1 Standalone Harness Archive
+# 前代版本归档
 
-TreeDiagram 原“树形界面主导、内置模型与固定 Workflow 控制器”的完整实现已于 2026-08-09 归档。
+TreeDiagram 的 standalone Agent Harness 已从活跃源码树移除，完整代码、规格、测试与工作区格式保存在不可变 Git 标签：
 
-- Git tag：`archive/v1-harness-baseline-2026-08-09`
-- 最后提交：`771d20f fix(workflows): make readiness retry idempotent`
-- 归档范围：该提交中的全部代码、设计文档、测试和工作区格式
-- 新方向：[DESIGN_V2.md](./DESIGN_V2.md)
+```text
+archive/v1-harness-baseline-2026-08-09
+```
 
-归档采用 Git 不可变引用，而不是删除或压缩源文件。需要检查或运行旧版本时：
+最后提交为 `771d20f fix(workflows): make readiness retry idempotent`。
+
+只读检查或运行前代版本：
 
 ```bash
 git switch --detach archive/v1-harness-baseline-2026-08-09
 ```
 
-需要基于旧版本建立修复分支时：
+需要维护分支：
 
 ```bash
-git switch -c codex/v1-maintenance archive/v1-harness-baseline-2026-08-09
+git switch -c codex/legacy-maintenance archive/v1-harness-baseline-2026-08-09
 ```
 
-V2 按全新产品开发，不读取、迁移或兼容 V1 workspace。V2 分支暂时可保留旧源文件作为实现参考；
-新代码不得依赖 V1 Workflow 或数据库格式。旧文件后续可以在归档 tag 可恢复的前提下分批移出活跃源码树。
+当前 V2 不迁移、不读取也不原地升级前代 workspace。请勿把前代数据库复制到 V2 项目后强制启动；应在独立目录和独立分支中处理。

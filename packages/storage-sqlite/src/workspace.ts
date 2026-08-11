@@ -66,7 +66,7 @@ export function readWorkspaceMeta(workspaceDir: string): WorkspaceMeta {
         expected: { format: WORKSPACE_FORMAT, version: WORKSPACE_VERSION },
         actual: { format: candidate.format, version: candidate.version },
         retryable: false,
-        suggestedAction: '选择空目录初始化 V2 workspace；V1 workspace 请继续使用归档版本。',
+        suggestedAction: '选择空目录初始化 V2 workspace；旧格式 workspace 请继续使用归档版本。',
       },
     );
   }
@@ -94,7 +94,7 @@ export function initializeWorkspace(workspaceDir: string, displayName: string): 
       throw domainError(
         'UNSUPPORTED_WORKSPACE_VERSION',
         'infrastructure_failure',
-        '检测到 V1 workspace；为保护数据，V2 拒绝原地初始化。',
+        '检测到旧格式 workspace；为保护数据，V2 拒绝原地初始化。',
         {
           actual: legacyDb,
           retryable: false,

@@ -135,7 +135,7 @@ Skills 是工作方法，不是持久运行实例。
 
 #### Design State Core
 
-保存 V1 中已经验证有价值的领域能力：节点与关系修订、ChangeSet、Release、权限、一致性、影响分析
+保存前代实现中已经验证有价值的领域能力：节点与关系修订、ChangeSet、Release、权限、一致性、影响分析
 和审计。Core 不依赖 MCP、HTTP、React 或任何具体宿主。
 
 #### Persistent Tree UI
@@ -277,7 +277,7 @@ Agent 根据自然语言和当前 Skill 决定实际工具调用序列。
 
 ## 7. Skill 设计
 
-V1 的工作流名称可以保留为可组合 Skills，但不再拥有固定服务端状态机。
+早期工作流名称可以保留为可组合 Skills，但不再拥有固定服务端状态机。
 
 ### 7.1 Initialize Skill
 
@@ -531,7 +531,7 @@ Hermes MCP 兼容参考：
 - WorkflowIssue
 - ModelCallTrace
 
-这些是 V1 Harness 的运行概念，不进入 V2 Schema，也不提供兼容表。对话和运行状态由宿主持有；
+这些是前代 Harness 的运行概念，不进入 V2 Schema，也不提供兼容表。对话和运行状态由宿主持有；
 TreeDiagram 只记录设计事实、共享注意力、公开 Agent 活动和受控变更。
 
 ### 11.4 事件
@@ -579,26 +579,25 @@ Attention 高频事件与设计审计事件应使用不同保留策略，避免�
 
 TreeDiagram 的核心语义必须在 Level 0 成立，质变体验从 Level 1 开始，Level 2/3 提供最佳整合。
 
-## 14. V1 边界与全新产品策略
+## 14. 前代边界与全新产品策略
 
-完整 V1 standalone harness 已由 Git tag `archive/v1-harness-baseline-2026-08-09` 冻结。V2 作为全新
-产品开发，与 V1 只共享问题背景和经过重新确认的领域概念，不承担迁移或兼容义务。
+完整 standalone harness 已由 Git tag `archive/v1-harness-baseline-2026-08-09` 冻结，并已从活跃
+源码树移除。V2 只共享问题背景和经过重新确认的领域概念，不承担迁移或兼容义务。
 
 V2 明确不提供：
 
-- V1 workspace 或数据库自动迁移；
-- V1 HTTP API、Workflow API 或表结构兼容；
-- V1 Workflow 历史只读展示；
-- V1 与 V2 数据双写或同步；
-- 在 V1 数据库上执行原地升级。
+- 旧格式 workspace 或数据库自动迁移；
+- 前代 HTTP API、Workflow API 或表结构兼容；
+- 前代 Workflow 历史只读展示；
+- 新旧格式数据双写或同步；
+- 在旧数据库上执行原地升级。
 
-旧源码在 V2 开发分支中只作为实现参考，不是过渡运行时。可复用代码必须经过显式提取、重新命名和
-V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成”V2。V2 使用新的 workspace 标识、
-数据库 Schema 和应用入口。
+历史源码只通过归档标签查阅，不是过渡运行时。可复用代码必须显式提取、重新命名并通过 V2 测试；
+不得把已归档架构重新接回活跃运行时。V2 使用新的 workspace 标识、数据库 Schema 和应用入口。
 
 ## 15. 实施顺序
 
-1. **冻结 V1**：归档 tag 已建立，旧产品停止功能演进。
+1. **冻结前代实现**：归档 tag 已建立，旧产品停止功能演进。
 2. **建立干净 V2 骨架**：创建新的 package/app 边界和全新 workspace Schema。
 3. **实现 Design State Core**：节点、关系、修订、ChangeSet、Release 和确定性错误。
 4. **实现 MCP 读取面**：完成无头查询、上下文装配和结构化错误。
@@ -606,7 +605,7 @@ V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成�
 6. **实现 Sidecar**：以常驻树完成选择、固定、Scope、差异和 Agent 活动闭环。
 7. **实现受控写入**：小步提案、单写者 lease、乐观并发和 ApprovalGrant。
 8. **接入 Codex**：发布首个 Skill + MCP Host Adapter，完成端到端贯穿验收。
-9. **接入 Hermes**：验证无头 MCP、Attention 和工具语义，冻结跨宿主 V1 工具契约。
+9. **接入 Hermes**：验证无头 MCP、Attention 和工具语义，冻结跨宿主 V2 工具契约。
 10. **增加嵌入式 UI**：在兼容宿主上复用 Sidecar 前端核心，按能力逐项增强。
 
 更详细的里程碑和完成条件见 [IMPLEMENTATION_PLAN_V2.md](./IMPLEMENTATION_PLAN_V2.md)。
@@ -639,7 +638,7 @@ V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成�
 - 高权限操作不能由 Agent 绕过用户确认。
 - 同一时刻只有持有 ChangeSetWriteLease 的宿主会话可以写入。
 - 高权限操作只能通过与目标 digest/version 绑定的一次性 ApprovalGrant 完成。
-- V2 可以从全新空 workspace 完成贯穿场景，不读取任何 V1 文件或数据库。
+- V2 可以从全新空 workspace 完成贯穿场景，不读取任何旧格式文件或数据库。
 
 ## 18. 已收敛决策与延后范围
 
@@ -652,7 +651,7 @@ V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成�
 | Attention 恢复 | 同会话自动恢复；跨会话必须由用户明确恢复        |
 | ChangeSet 并发 | V2 首版一个活动 ChangeSet、一个写入 lease       |
 | 用户确认       | 一次性、目标绑定、版本绑定的 ApprovalGrant      |
-| V1 数据        | 不迁移、不兼容；V2 作为全新产品和全新 workspace |
+| 旧格式数据     | 不迁移、不兼容；V2 作为全新产品和全新 workspace |
 
 ### 18.2 延后到 V2 首版之后
 
@@ -660,5 +659,5 @@ V2 测试验证；不得通过持续修改 V1 Workflow 架构来“逐渐变成�
 - 远程多用户协作与组织级身份系统；
 - 以宿主固定面板完全替代 Sidecar；
 - 不经用户恢复确认的跨会话 Attention 自动继承；
-- V1 数据导入器或兼容读取器；
+- 旧格式数据导入器或兼容读取器；
 - 公钥签名、远程授权服务等复杂 ApprovalGrant 基础设施。

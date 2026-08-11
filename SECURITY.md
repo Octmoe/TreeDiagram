@@ -5,10 +5,10 @@
 TreeDiagram V2 is currently a prerelease. Security fixes are applied to the latest published V2
 prerelease only.
 
-| Version         | Supported |
-| --------------- | --------- |
-| `2.0.0-alpha.x` | Yes       |
-| V1 archive      | No        |
+| Version          | Supported |
+| ---------------- | --------- |
+| `2.0.0-alpha.x`  | Yes       |
+| Earlier versions | No        |
 
 ## Reporting a vulnerability
 

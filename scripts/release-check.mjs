@@ -28,6 +28,8 @@ const requiredFiles = [
   'CHANGELOG.md',
   'SECURITY.md',
   'CONTRIBUTING.md',
+  'MANUAL.md',
+  'README.md',
   'docs/RELEASING.md',
   '.github/workflows/ci.yml',
   '.github/release.yml',
@@ -36,6 +38,27 @@ const requiredFiles = [
 ];
 for (const relativePath of requiredFiles) {
   if (!existsSync(join(root, relativePath))) fail(`缺少发布文件：${relativePath}`);
+}
+
+const archivedRuntimePaths = [
+  'apps/server',
+  'apps/web',
+  'packages/core',
+  'packages/contracts/src/schemas',
+  'tests/e2e',
+  'tests/integration',
+  'tests/model-smoke',
+  'tests/unit',
+  'DESIGN.md',
+  'IMPLEMENTATION_DESIGN.md',
+  'IMPLEMENTATION_PLAN.md',
+  'V1_SPEC.md',
+  'docs/API_CONTRACT.md',
+];
+for (const relativePath of archivedRuntimePaths) {
+  if (existsSync(join(root, relativePath))) {
+    fail(`活跃 V2 源码树重新包含已归档路径：${relativePath}`);
+  }
 }
 
 const rootManifest = readJson(join(root, 'package.json'));

@@ -28,7 +28,8 @@ npm run test:e2e
   `plugins/treediagram/.mcp.json`, or `plugins/treediagram/runtime.local.json`.
 - Do not weaken approval, lease, workspace-isolation, or same-origin boundaries without an explicit
   design change and security review.
-- Treat V1 as archived. New product behavior belongs to the V2 packages and Sidecar.
+- Keep the active tree V2-only. Historical implementation work belongs on a branch created from the
+  archive tag.
 
 ## Design changes
 

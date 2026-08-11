@@ -1,239 +1,412 @@
-# TreeDiagram 使用手册
+# TreeDiagram V2 使用手册
 
-> **已归档**：本文描述 V1 standalone Agent Harness。权威归档引用为
-> `archive/v1-harness-baseline-2026-08-09`；当前方向见 [DESIGN_V2.md](./DESIGN_V2.md)。
+本手册面向源码安装用户，覆盖 Codex 插件安装、项目初始化、日常设计协作、GUI 审批、后台服务、数据备份和故障排查。
 
-面向使用者的完整指南：概念、快速上手、五个 Agent 工作流的用法、发布生命周期、
-AI 托管、下游集成与故障处理。实现细节以 [V1_SPEC](./V1_SPEC.md) 与
-[API 契约](./docs/API_CONTRACT.md) 为准；安装与配置见 [README](./README.md)。
+当前版本：`2.0.0-alpha.1`。
 
----
+## 1. 先理解三个边界
 
-## 1. 这套系统是什么
+TreeDiagram 不是另一个聊天机器人，也不自行调用模型。
 
-TreeDiagram 帮你把一个模糊的想法，逐步打磨成一棵**可查询、可审计、可发布**的设计树：
+1. **Codex/Agent 负责思考**：理解你的目标、追问、推导并调用工具。
+2. **TreeDiagram 负责持久状态**：保存 Working State、候选变更、关系、Attention 与 Release。
+3. **人负责高权限决定**：采用候选、确认根节点、接管写 lease 和发布 Release 都需要明确授权。
 
-- 你（用户）和 AI Agent 共同编辑同一份设计；
-- 一切修改都是**候选（candidate）**，不会直接污染已发布的稳定版本；
-- 每个稳定版本叫 **Release**，下游系统只读 Release；
-- Agent 可以初始化、推导、挑刺、换视角、做全树复核——但**永远不能**替你确认根部、
-  不能越出你授权的托管子树、不能跳过复核直接发布。
+聊天中的一句“同意”不会直接改写设计树。Agent 必须提交结构化候选，你再在 GUI 中审查。
 
-## 2. 核心概念速览
+## 2. 环境要求
 
-| 概念                     | 一句话说明                                                                                                      |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| **节点（Node）**         | 设计的最小单元：`goal/constraint/claim/topic/question/option/decision/risk/evidence/validation_method` 十种类型 |
-| **关系（Relation）**     | 节点间的语义边：`contains`（树结构）+ `supports/contradicts/addresses/selects/rejects/depends_on/...`           |
-| **修订（Revision）**     | 节点的每次修改都产生新修订，历史永不覆盖                                                                        |
-| **ChangeSet**            | 收集候选的"暂存区"，同一时刻只有一个 live ChangeSet                                                             |
-| **root 角色**            | 设计的根基命题，永远只能由**用户**确认                                                                          |
-| **审批状态**             | `draft → tentative → ai_confirmed / user_confirmed`，Agent 最高只能到 `ai_confirmed`                            |
-| **认知状态**             | `assumed`（假设）/ `supported`（有证据）/ `refuted`（已证伪），仅 claim/constraint/risk 有                      |
-| **复核项（ReviewItem）** | adopt 后系统列出的"受影响清单"，逐项裁决后才能发布                                                              |
-| **Release**              | 一致、只读、可下游消费的快照；版本号递增                                                                        |
-| **Project 状态**         | `initializing → consistent ⇄ reevaluating / blocked`                                                            |
+- Windows 10/11 为当前主要验证平台；
+- Node.js 24 或更高版本；
+- npm；
+- Codex Desktop 或 Codex CLI；
+- Git，用于获取和更新源码。
 
-## 3. 快速开始（10 分钟）
+检查环境：
 
-```bash
-npm ci && npm start
+```powershell
+node --version
+npm --version
+git --version
+codex --version
 ```
 
-1. 首次运行会自动初始化 `./workspace` 并提示 token 文件路径；
-2. 把 `<workspace>/.treediagram/model.json` 配上 API key（见 README「模型配置」），
-   或先用 `npm start -- --fake` 离线体验；
-3. 打开 `http://127.0.0.1:4317/`，粘贴 **admin token** 进入编辑器；
-4. 在 WorkflowPanel 选择 `initialize`，多选上传描述想法的 source 文件（可追加/移除），点「启动」；
-5. Initialize 写入候选后会显示“等待审批”；在 Inspector 把根节点改为 `user_confirmed`，
-   点击“已完成根节点确认，重新检查并完成” → Adopt → 复核 → Publish，得到 Release 1。
+如果系统找不到 Node.js、Git 或 Codex，先安装缺失依赖。不要让自动化脚本覆盖系统中已有的自定义安装。
 
-## 4. 编辑器界面导览
+## 3. 安装
 
-| 区域                          | 功能                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| **TokenGate**                 | 启动页，粘贴 admin token                                                   |
-| **TreePanel（左）**           | 按 Release/Working 视图浏览设计树，点击选中节点                            |
-| **Inspector（中）**           | 选中节点的详情：概览 / 编辑（保存即产生候选修订）/ 历史 / 关系（入边出边） |
-| **ChangeSetDrawer（右抽屉）** | live ChangeSet 状态、一致性预览、复核项裁决、Adopt / Abandon / Publish     |
-| **WorkflowPanel（下）**       | 选择工作流类型 + focus 指令 → 启动；查看运行状态/步骤/摘要；取消在途运行   |
+### 3.1 让 Codex AI 安装
 
-常用操作路径：
+在 Codex 新任务中粘贴：
 
-- **新建/修改节点**：Inspector 编辑 → 保存（写入候选，Release 不受影响）；
-- **归档节点**：Inspector「归档」按钮（逻辑删除，非物理删除）；
-- **查看候选与发布的差异**：ChangeSetDrawer → 一致性预览；
-- **发布**：ChangeSetDrawer → Adopt → 逐项复核 → 自动 ready → 填摘要 → Publish。
-
-## 5. 工作流详解
-
-通用规则：
-
-- 同一时刻只允许一个进行中的 WorkflowRun；
-- 每次运行都显示**当前步骤**、语义 Issue 与**检查点**；失败/中断后可从本地 checkpoint 续跑；
-- 运行先评估信息是否足够；歧义会先聊天确认，不会边猜边写；
-- 候选先在内存 WorkingSet 预检。硬结构错误最多自动修复两次，失败时不会部分落库；
-- Agent 产出一律进入候选 ChangeSet，**不自动发布**（ai_managed 例外，见 §7）；
-- 启动方式：WorkflowPanel 选类型、（derive/grill 需要先在树上选中目标节点）、
-  可选填 focus 指令 →「启动」。对应 API：`POST /api/v1/workflows`。
-
-### 5.1 Initialize — 从零冷启动
-
-| 项             | 说明                                                                             |
-| -------------- | -------------------------------------------------------------------------------- |
-| **用途**       | 把原始描述一次投影成完整初版设计图，并提出根部候选                               |
-| **可用条件**   | project = `initializing`（全新工作区只有一次）                                   |
-| **输入**       | 至少一个 source（`POST /api/v1/sources`，markdown 文本）                         |
-| **产出**       | root 角色候选（tentative）+ 普通候选 + contains 结构；未确认细节保留为 `assumed` |
-| **之后做什么** | 在“等待审批”阶段把 root revise 成 `user_confirmed` → 重新检查 → Adopt → Publish  |
-
-> UI 入口：WorkflowPanel 选择 `initialize` 后出现 source 暂存区——可多次多选追加
-> markdown/纯文本文件、在列表中查看并移除（同名同大小自动去重）；启动时逐个上传
-> 并以 `sourceAssetIds` 启动。空列表启动会被客户端拦截提示。
-
-### 5.2 Derive — 顺向推导
-
-| 项             | 说明                                                      |
-| -------------- | --------------------------------------------------------- |
-| **用途**       | 围绕选中节点展开：子命题、Option、Decision、约束分解      |
-| **可用条件**   | project = `consistent`；需要目标节点                      |
-| **产出**       | tentative 候选（节点 + 关系），挂在目标节点下             |
-| **之后做什么** | 人工审查候选，保留/修改/归档，下一轮 Adopt 时统一进入复核 |
-
-### 5.3 Grill — 对抗性审查
-
-| 项             | 说明                                                                                                   |
-| -------------- | ------------------------------------------------------------------------------------------------------ |
-| **用途**       | 对选中子树"挑刺"：证据不足点、遗漏风险、跨分支张力（contradicts）                                      |
-| **可用条件**   | project = `consistent`；需要目标节点                                                                   |
-| **产出**       | question / risk / evidence / contradicts 候选；**revise 一律强制 draft**（Grill 无权直接改已确认内容） |
-| **之后做什么** | 处理它提出的问题：补充证据、回答 question、化解或接受 contradicts                                      |
-
-### 5.4 Unbox — 跳出边界
-
-| 项             | 说明                                                                                                  |
-| -------------- | ----------------------------------------------------------------------------------------------------- |
-| **用途**       | 暂时拿掉若干约束，生成"如果……会怎样"的平行方向                                                        |
-| **可用条件**   | project = `consistent`；无需目标节点；建议填 focus 指令（如"如果不是单机呢"）                         |
-| **产出**       | 自动创建 `unbox_exploration` 容器（draft），替代方向挂在容器下；**root 角色会被剥离**，绝不自动 adopt |
-| **之后做什么** | 对比替代方向；有价值的部分人工挑回主树                                                                |
-
-### 5.5 Re-evaluate — 全树复核
-
-| 项             | 说明                                                                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **用途**       | adopt 之后，逐项复核受影响内容：仍有效（valid）、需修订（revise）、已证伪（refute）、被替代（supersede）；关系端点失效时**显式迁移**到新修订（绝不静默迁移） |
-| **可用条件**   | live ChangeSet = `reevaluating`（或 project = `blocked`）；通常紧随 adopt                                                                                    |
-| **产出**       | 分批裁决 + 迁移/替代修订；全部解决且一致性检查通过 → ChangeSet 自动 `ready`                                                                                  |
-| **之后做什么** | 若模型需要更多信息，运行进入 `waiting_user`，直接在 Workflow 对话中回答；若复核项已转 blocked，则人工裁决后 resume；ready 后 Publish                         |
-
-## 6. 发布生命周期（最重要的一条主线）
-
-```
-编辑/Agent 写入候选（ChangeSet = open）
-        │  Adopt（用户，或 ai_managed 自动）
-        ▼
-design.invalidated 事件；ChangeSet = reevaluating；下游读取 423 锁定
-        │  Re-evaluate（Agent 分批复核）+ 人工裁决
-        ▼
-全部复核项解决 + 一致性检查通过 → ChangeSet = ready
-        │  Publish（填 Release 摘要）
-        ▼
-Release N 发布；release.published 事件；下游闸门放开
+```text
+请帮我安装 TreeDiagram V2：
+1. 如果本机还没有源码，把 https://github.com/Octmoe/TreeDiagram 克隆到合适的开发目录；
+2. 阅读仓库 README.md 和 MANUAL.md；
+3. 检查 Node.js 24+、npm 与 Codex CLI；
+4. 在仓库运行 npm.cmd run install:codex；
+5. 验证 marketplace 和 treediagram 插件安装成功。
+不要删除任何已有项目的 .treediagram 数据。遇到 Hook 信任、权限提升或系统级依赖安装时暂停让我确认。
 ```
 
-关键性质：
+AI 可以执行 Git、npm 和 Codex CLI，但操作仍受当前 Codex sandbox、审批策略与系统权限约束。TreeDiagram 的 `SessionStart` Hook 会运行本地命令，首次启用时应由你审查并信任。
 
-- **候选不影响 Release**：发布前下游看到的永远是上一个稳定版本；
-- **关系不静默迁移**：端点修订后，旧关系必须先显式迁移才能通过一致性检查；
-- **根部变化触发全树复核**：改 root = 整棵树进复核集；
-- **Publish 与事件是同一事务**：不会出现"Release 发了但事件丢了"。
+### 3.2 手动安装
 
-## 7. AI 托管（ai_managed）
-
-适合"这个分支我放心交给 Agent"的场景：
-
-1. 在目标子树根节点上设置托管策略：`PUT /api/v1/nodes/:id/delegation`（`mode: ai_managed`；
-   默认所有分支都是 `human_final`）；
-2. Agent 在该子树内运行时可以把节点/关系确认为 `ai_confirmed`（记录 run ID + 策略 ID）；
-3. 提案的影响闭包**完全在子树内** → 运行结束自动 Adopt 并进入 Re-evaluate；
-   **越出子树** → 自动 Adopt 被拦下，运行转 `waiting_user` 等你裁决；
-4. 铁律：AI 永远不能确认/修改 root，不能 `user_confirmed`，不能 Publish。
-
-随时可撤销策略；历史 `ai_confirmed` 修订仍可追溯到当时的授权。
-
-## 8. 复核项裁决语义
-
-| 裁决               | 含义                                                              |
-| ------------------ | ----------------------------------------------------------------- |
-| `valid`            | 内容仍然成立（关系端点失效时需附带迁移）                          |
-| `revise`           | 需要修订，系统已/将生成替代修订                                   |
-| `refute`           | 已证伪，标记 `refuted`                                            |
-| `supersede`        | 被新修订替代                                                      |
-| `unknown`（block） | 无法判断 → 复核项 blocked，project 可能进入 blocked，需要人工介入 |
-
-ChangeSetDrawer 里 pending 项有四个裁决按钮 + block；blocked 项可"解除阻塞（valid）"。
-全部 pending/blocked 清零且一致性检查通过时，ChangeSet 自动转 ready。
-
-## 9. 下游集成（consumer token）
-
-```bash
-# 轮询等待新 Release
-GET /api/v1/events?after=<cursor>     # 始终可读；watch release.published
-GET /api/v1/status                    # 始终可读
-# 闸门放开（consistent）后读取
-GET /api/v1/release/current
-GET /api/v1/tree?view=release&depth=3
-GET /api/v1/query?view=release&type=decision
+```powershell
+git clone https://github.com/Octmoe/TreeDiagram.git
+cd TreeDiagram
+npm.cmd run install:codex
 ```
 
-- `reevaluating/blocked` 期间 release 读取返回 **423 `DESIGN_NOT_CONSISTENT`**——
-  下游只需继续轮询 events；
-- working 视图/历史/写接口对 consumer 一律 403，没有绕过路径。
+安装命令会：
 
-## 10. 异常与恢复
+1. 检查源码版本和依赖；
+2. 在需要时运行冻结依赖安装；
+3. 构建 V2 packages、Sidecar 与 UI；
+4. 生成仅用于本机的 MCP 配置；
+5. 注册仓库 marketplace；
+6. 安装 `treediagram` 插件；
+7. 恢复干净的源码 manifest，避免 cachebuster 污染 Git 工作区。
 
-| 情况              | 现象                                                    | 处理                                                                              |
-| ----------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 信息存在关键歧义  | run = `waiting_user`，面板显示“等待回答”与语义 Issue    | 在对话框回答；`respond` 后重新做就绪评估                                          |
-| root 尚未确认     | run = `waiting_user`，面板显示“等待审批”                | 将 root revise 为 `user_confirmed`，点“重新检查并完成”                            |
-| 复核项 unknown    | 复核项 blocked，run = `waiting_user`                    | Drawer 里人工裁决后 resume                                                        |
-| 自动 Adopt 越界   | run = `waiting_user`（autoAdoptBlocked）                | 人工 Adopt 或取消 run                                                             |
-| 模型输出不合法    | run = `failed`（MODEL_OUTPUT_INVALID）                  | “重试失败阶段”或 `POST /workflows/:id/retry`                                      |
-| 服务进程重启      | 遗留 running run 自动标记 `failed(PROCESS_INTERRUPTED)` | retry 从本地 checkpoint 幂等续跑                                                  |
-| 不想继续          | —                                                       | 「取消」（不回滚已写入的提案，候选可再归档）                                      |
-| 未配置模型        | 启动工作流 422 `MODEL_NOT_CONFIGURED`                   | 配 `model.json` / `OPENAI_API_KEY`，或 `--fake`                                   |
-| provider 拒绝请求 | 启动工作流 502 `MODEL_PROVIDER_FAILED`（HTTP 4xx/5xx）  | 错误窗口中查看服务端返回的原始原因后对症修正                                      |
-| 结构化输出被截断  | 模型记录显示 `reason=max_output_tokens`                 | 系统自动扩容重试一次；仍失败时调高 `model.json.outputTokens` 与必要的 `timeoutMs` |
+安装可能访问 npm registry。若已有 Sidecar 锁定 Windows 原生 SQLite DLL，脚本会尽量复用精确依赖；确实需要重装时会提示你先停止相关进程。
 
-> 澄清、审批与故障重试彼此分离：`respond` 必须携带当前 `waitId` 与幂等 `clientMessageId`；
-> `retry` 只接受 failed；`resume` 用于重新检查已经由用户在领域对象上完成的审批或外部 blocker，
-> 存在开放问题时不能绕过。
+### 3.3 Codex CLI 不可用时
 
-### 错误窗口
+先准备运行时：
 
-用户操作（启动/取消工作流、保存修订、建关系、ChangeSet 动作等）失败时会弹出**独立错误窗口**，展示错误码、HTTP 状态、消息与服务端返回的 details 原始 JSON，可一键「复制全部」用于反馈排查；Esc 或点击遮罩关闭。失败的历史 WorkflowRun 也可在 Workflow 面板点「查看错误详情」重新打开。
+```powershell
+npm.cmd run install:codex -- --no-codex
+```
 
-模型类错误（`MODEL_PROVIDER_FAILED`）的 message 会附带 provider 返回的原始原因（截断到 500 字符），常见如 `Model Not Exist`（模型名填错）、`context length exceeded`（输入超长）、网关不支持某参数等。
+再到能够运行 Codex CLI 的终端执行：
 
-## 11. 常见问题
+```powershell
+codex plugin marketplace add .
+codex plugin add treediagram@treediagram-local
+```
 
-**Q：Agent 改坏了怎么办？**
-已发布内容永远不会被改坏——Agent 只写候选。Abandon 当前 ChangeSet 即回到上一个 Release。
+### 3.4 安装后的必要动作
 
-**Q：为什么 adopt 后发布不了？**
-还有 pending/blocked 复核项，或一致性检查有 blocking 问题（Drawer → 一致性预览查看具体条目）。
+1. 在 Codex 插件浏览器中确认 TreeDiagram 已安装且启用；
+2. 审查并信任 `SessionStart` Hook；
+3. **新建一个 Codex 任务**。
 
-**Q：为什么关系报了"端点必须指向活动修订"？**
-你修订了关系的端点节点。跑 Re-evaluate（或人工 revise 该关系）把端点显式迁到新修订。
+插件的 Skills、MCP 工具与 Hook 只会在安装后的新任务或新 CLI session 中加载。Codex CLI 可输入 `/plugins` 打开插件浏览器。
 
-**Q：模型配置错了启动不了？**
-启动日志会给出带文件路径的具体错误（未知字段/非法 URL/缺少 apiKey 等），按提示修正 `model.json`。
+## 4. 第一次初始化项目
 
-**Q：模型记录显示 `max_output_tokens`？**
-系统只对这种明确截断自动扩容一次。默认预算为 readiness 8K、普通 proposal 16K、Initialize/repair
-32K，扩容上限 64K；可在 `model.json.outputTokens` 中逐项覆盖。若设置很大的输出预算，也应同步增加
-`timeoutMs`，否则可能从 token 截断变成请求超时。
+不要在 TreeDiagram 源码目录中替其他产品建立设计树。应先在 Codex 中打开真正要设计的目标项目。
 
-**Q：数据在哪、怎么备份？**
-全部在 `<workspace>/.treediagram/`。停服务后复制 `state.sqlite` + `workspace.json` 即完成备份。
+新建任务后，Hook 会：
+
+1. 把任务的 `cwd` 识别为项目根目录；
+2. 创建或读取 `<项目>/.treediagram/workspace.json`；
+3. 启动或复用该项目独立的 Sidecar；
+4. 把包含动态端口和当前 session 的 GUI URL 注入任务上下文；
+5. 让 stdio MCP 与 Sidecar 指向同一个 workspace。
+
+然后对 Agent 说：
+
+```text
+请使用 TreeDiagram 初始化这个项目，把下面的想法整理成一个小而可审查的根设计：
+<你的项目目标、用户、约束和当前不确定性>
+```
+
+Initialize 应只提出少量根部候选，不应一次生成整棵巨大设计树。你可以要求 Agent 缩小范围或分批提交。
+
+## 5. 日常与 Agent 协作
+
+TreeDiagram 提供六个 Skills。
+
+| Skill       | 什么时候使用               | 预期结果                             |
+| ----------- | -------------------------- | ------------------------------------ |
+| Initialize  | 新项目或空设计空间         | 建立小而可审查的根设计               |
+| Derive      | 继续展开当前分支           | 提出子节点、关系或更精确的约束       |
+| Grill       | 希望 AI 分轮追问你         | 先澄清隐含决定，经你确认后再形成候选 |
+| Check       | 希望一次性审计当前焦点     | 返回证据缺口、矛盾、弱决策和风险     |
+| Unbox       | 当前方向过早收敛或过于普通 | 暴露框架假设，提出真正不同的方向     |
+| Re-evaluate | 已采用变更影响旧结论       | 复查受影响节点并提出局部修复         |
+
+可以直接自然语言调用：
+
+```text
+请围绕我在 TreeDiagram 中选中的节点继续 derive。
+```
+
+```text
+Grill me：分轮追问我当前选中的方案，先不要写入候选。
+```
+
+```text
+请 check 当前选中的候选，给出问题清单，不要修改设计。
+```
+
+如果想明确指定 Skill，也可以在支持的界面中使用 `@` 选择 TreeDiagram 或对应 Skill。
+
+## 6. GUI 导览
+
+Sidecar 默认是三栏工作台：
+
+- **左栏：设计树**
+  浏览 Working 节点、搜索、多选、查看候选投影和关系提示。
+- **中栏：节点详情**
+  查看正文、属性、历史、关系、根节点状态与 Attention 信息。
+- **右栏：Working State**
+  查看活动 ChangeSet、候选差异、审批依赖、采用/修订/丢弃、校验和发布。
+
+顶部 Shared Focus 显示当前主焦点、已选数量、固定数量和 Agent 状态。界面支持深色与亮色主题。
+
+## 7. 选择节点与“Agent 可见”
+
+点击 Working 节点或候选节点会更新 Attention，但不会自动调用模型。
+
+“Agent 可见”准确含义是：
+
+1. GUI 把选择写入该项目的共享 Attention；
+2. Agent 调用 `attention_get` 读取 `primaryNodeId` 或 `primaryChangeId`；
+3. Agent 再调用 `design_context_get` 获取完整结构化上下文。
+
+候选和 Working 节点都可以成为主焦点。按住 Ctrl/⌘ 可以多选，用于比较或扩大读取范围。
+
+新任务不会静默继承旧任务焦点。界面会提供可恢复焦点，只有你明确恢复后才复制到新 session。为处理浏览器标签页与 Codex session 不一致的情况，Agent 读取时也会解析同一项目最近一次明确的 Sidecar 选择。
+
+## 8. 候选如何出现在树中
+
+同一 ChangeSet 中尚未采用的候选节点，会依据候选 `contains` 关系投影到预期父节点下，并显示虚线与候选徽标。
+
+- 能解析父节点：显示在对应树位置；
+- 暂时没有父节点：显示在“待定位”区域；
+- `supports`、`depends_on`、`constrains` 等语义关系显示关系数量提示；
+- 聚焦关系卡时，树会分别高亮起点和终点。
+
+候选投影只是预览，不属于 Working State，也不会出现在已发布 Release 中。
+
+## 9. 审批规则
+
+审批遵循自上而下的单一路径：
+
+1. 根候选可以直接批准；
+2. 子候选只有在其唯一父节点已经进入 Working State 后才能批准；
+3. 指向新子节点的 `contains` 随子节点一起批准或丢弃；
+4. `supports`、`depends_on`、`constrains` 等语义关系单独审查；
+5. 还有任何未处理候选时，不允许校验或发布。
+
+这样可以避免用户同时理解“节点是否采用”和“它挂在哪里”两张审批卡。
+
+高权限按钮使用短时、目标绑定、版本绑定、单次消费的 ApprovalGrant。不要复制、长期保存或复用授权 token。
+
+## 10. ChangeSet 与 Release
+
+一个 workspace 同时只有一个活动 ChangeSet。
+
+典型流程：
+
+```text
+Agent 或用户建立 ChangeSet
+  → 提出小批候选
+  → 用户逐项采用、修订或丢弃
+  → 全部候选处理完
+  → 确定性校验
+  → 用户发布 Release
+```
+
+Working State 是当前采用后的设计事实；Release 是不可变快照。候选不会污染上一个 Release。
+
+如果另一个任务持有写 lease，当前任务只能读取，除非你通过 GUI 明确执行 Lease Takeover。
+
+## 11. Sidecar 服务生命周期
+
+Sidecar 是按项目运行的 loopback 后台进程：
+
+- 只绑定 `127.0.0.1`；
+- 关闭浏览器不会停止；
+- 关闭单个 Codex 任务或 MCP 连接不会停止；
+- 再次打开同一项目会健康检查并复用；
+- 电脑关机、进程退出或显式 Stop 会停止；
+- 服务停止不会删除设计数据。
+
+查看状态：
+
+```powershell
+npm.cmd run treediagram:status -- --workspace H:\path\to\project
+```
+
+停止：
+
+```powershell
+npm.cmd run treediagram:stop -- --workspace H:\path\to\project
+```
+
+电脑重启后有两种恢复方式：
+
+- 在目标项目中新建 Codex 任务，让 Hook 自动恢复；
+- 不进入 AI，会话外直接打开现有设计树。
+
+## 12. 不使用 AI，直接查看设计树
+
+双击 TreeDiagram 源码根目录的 `Open TreeDiagram.cmd`，选择已有 `.treediagram` 的项目。
+
+或运行：
+
+```powershell
+npm.cmd run treediagram:open -- --workspace H:\path\to\project
+```
+
+这个入口：
+
+- 不启动 Codex；
+- 不调用 Agent；
+- 不运行 Initialize；
+- 不创建新 ChangeSet；
+- 拒绝没有现有 TreeDiagram workspace 的目录。
+
+## 13. 项目隔离与数据位置
+
+每个项目有自己的：
+
+- `workspaceId`；
+- `.treediagram/state-v2.sqlite`；
+- `.treediagram/workspace.json`；
+- Sidecar 端口和 `.treediagram/sidecar.json` 进程记录。
+
+不同项目不会共享设计事实。同一项目的多个任务共享 Working State 和 Release，但 Attention 按宿主 session 管理，并需要显式恢复。
+
+不要把一个项目的 `.treediagram` 目录复制到另一个正在使用的项目后同时启动两边。
+
+## 14. 备份与恢复
+
+备份前先停止项目 Sidecar：
+
+```powershell
+npm.cmd run treediagram:stop -- --workspace H:\path\to\project
+```
+
+然后复制整个 `<项目>/.treediagram/` 目录。恢复时放回原项目路径，再使用 Codex Hook 或 `treediagram:open` 启动。
+
+不要只复制正在写入的 SQLite 主文件而遗漏 WAL/SHM 文件。
+
+## 15. 更新、回滚与卸载
+
+更新源码和插件：
+
+```powershell
+git pull
+npm.cmd run update:codex
+```
+
+更新后必须新建任务。
+
+回滚：
+
+```powershell
+git checkout <previous-tag>
+npm.cmd run update:codex
+```
+
+卸载插件应在 Codex 的 `/plugins` 浏览器中完成。可先停止指定项目：
+
+```powershell
+npm.cmd run uninstall:codex -- --workspace H:\path\to\project
+```
+
+插件卸载和 Sidecar 停止都不会删除 `.treediagram`。
+
+## 16. 独立运行与开发命令
+
+构建并启动指定 workspace：
+
+```powershell
+npm.cmd run build
+npm.cmd run workspace:init -- --workspace H:\path\to\project --name "My design"
+npm.cmd start -- --workspace H:\path\to\project
+```
+
+填充演示数据是可选的：
+
+```powershell
+npm.cmd run seed:demo -- --workspace H:\path\to\project
+```
+
+手工启动 stdio MCP：
+
+```powershell
+$env:TREEDIAGRAM_WORKSPACE = "H:\path\to\project"
+npm.cmd run mcp
+```
+
+开发本仓库插件：
+
+```powershell
+npm.cmd run try:codex
+```
+
+完整质量门禁：
+
+```powershell
+npm.cmd run release:verify
+```
+
+## 17. 常见问题
+
+### 安装后看不到 Skills 或工具
+
+先确认插件在 `/plugins` 中已安装并启用，然后新建任务。旧任务不会动态加载刚安装的插件内容。
+
+### Hook 没有启动 Sidecar
+
+确认：
+
+- 当前任务打开的是目标项目目录；
+- 已信任 TreeDiagram 的 `SessionStart` Hook；
+- Node.js 24+ 可执行；
+- 项目目录可写；
+- 没有安全策略阻止本地命令。
+
+也可以运行 `treediagram:open` 验证 Sidecar 本身是否可启动。
+
+### 网页显示已选择，但 Agent 说没有焦点
+
+1. 再点击一次目标 Working 节点或候选；
+2. 确认网页和 Codex 打开的是同一个项目；
+3. 要求 Agent 先调用 `attention_get`，再调用 `design_context_get`；
+4. 若是新任务，先在界面确认恢复旧焦点。
+
+“Agent 可见”不代表网页会主动向模型发送消息。
+
+### 子候选的采用按钮不可用
+
+先批准其父候选。父节点进入 Working State 后，子节点与它的 `contains` 挂载关系才能一起批准。
+
+### 更新时出现 `better_sqlite3.node` 或 `EPERM`
+
+Windows 正有进程使用 SQLite 原生 DLL。先停止相关项目的 Sidecar，必要时关闭仍使用旧运行时的 Codex 任务，再重新运行：
+
+```powershell
+npm.cmd run update:codex
+```
+
+### 电脑重启后网页打不开
+
+端口不是固定的，旧书签可能失效。运行 `treediagram:open`，或在项目中新建 Codex 任务，让系统读取新的 Sidecar URL。
+
+### 检测到旧格式 workspace
+
+V2 会拒绝原地打开旧数据库，避免破坏数据。请在新目录初始化 V2；需要查看前代实现时使用 [归档入口](./ARCHIVE.md)。
+
+## 18. 安全提醒
+
+- TreeDiagram 不上传项目设计数据，但 npm 安装会访问配置的 registry。
+- Sidecar 只监听 loopback，仍不应把动态端口转发到公网。
+- 不要提交 `.treediagram`、SQLite 文件、`.mcp.json` 或 `runtime.local.json`。
+- 不要绕过根节点确认、ApprovalGrant 或 lease 接管流程。
+- Hook 与 MCP 继承 Codex 当前 sandbox 和审批策略，不拥有额外系统权限。
+
+## 19. 进一步阅读
+
+- [产品设计](./DESIGN_V2.md)
+- [实现计划](./IMPLEMENTATION_PLAN_V2.md)
+- [V2 精确契约](./docs/V2_CONTRACTS.md)
+- [Hermes 兼容说明](./docs/HERMES_COMPATIBILITY.md)
+- [发布指南](./docs/RELEASING.md)
+- [OpenAI 官方插件说明](https://learn.chatgpt.com/docs/plugins)
