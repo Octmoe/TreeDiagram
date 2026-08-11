@@ -13,6 +13,14 @@ import type {
 
 export interface BootstrapData {
   workspace: WorkspaceSummary;
+  lifecycle:
+    | {
+        available: true;
+        projectRoot: string;
+        archivePath: string;
+        confirmationText: string;
+      }
+    | { available: false };
   nodes: NodeDetail[];
   relations: RelationDetail[];
   attention: AttentionContext | null;
@@ -70,6 +78,24 @@ export class SidecarApi {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     }).then((response) => json<T>(response));
+  }
+
+  closeWorkspace(): Promise<{ accepted: true; mode: 'close' }> {
+    return fetch(`${this.baseUrl}/api/v2/workspace/close`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }).then((response) => json(response));
+  }
+
+  clearWorkspace(
+    confirmationText: string,
+  ): Promise<{ accepted: true; mode: 'clear'; archivePath: string }> {
+    return fetch(`${this.baseUrl}/api/v2/workspace/clear`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirmationText }),
+    }).then((response) => json(response));
   }
 
   restore(sourceContextId: string, identity: UiIdentity): Promise<AttentionContext> {

@@ -8,6 +8,13 @@ import { isDomainError } from '@treediagram/domain';
 import { handleStreamableHttp, ToolService } from '@treediagram/mcp';
 import type { V2Store } from '@treediagram/storage-sqlite';
 
+export interface SidecarLifecycleOptions {
+  projectRoot: string;
+  archivePath: string;
+  requestClose: () => void;
+  requestClear: (archivePath: string) => void;
+}
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -18,7 +25,7 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-export function buildSidecar(store: V2Store): FastifyInstance {
+export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions): FastifyInstance {
   const app = Fastify({
     logger: { level: process.env['LOG_LEVEL'] ?? 'info' },
     bodyLimit: 2 * 1024 * 1024,
@@ -83,6 +90,14 @@ export function buildSidecar(store: V2Store): FastifyInstance {
     );
     return {
       workspace: store.getWorkspaceSummary(),
+      lifecycle: lifecycle
+        ? {
+            available: true,
+            projectRoot: lifecycle.projectRoot,
+            archivePath: lifecycle.archivePath,
+            confirmationText: store.meta.displayName,
+          }
+        : { available: false },
       nodes: store.listNodes(),
       relations: store.listRelations(),
       attention: attention.get(identity),
@@ -96,6 +111,32 @@ export function buildSidecar(store: V2Store): FastifyInstance {
         : attention.listRecoveryCandidates(hostKind, hostSessionRef),
       eventCursor: cursor,
     };
+  });
+
+  app.post('/api/v2/workspace/close', async (_request, reply) => {
+    if (!lifecycle)
+      return reply.code(503).send({
+        error: { code: 'LIFECYCLE_UNAVAILABLE', message: '当前 Sidecar 未启用工作区关闭能力。' },
+      });
+    lifecycle.requestClose();
+    return { accepted: true, mode: 'close' };
+  });
+
+  app.post('/api/v2/workspace/clear', async (request, reply) => {
+    if (!lifecycle)
+      return reply.code(503).send({
+        error: { code: 'LIFECYCLE_UNAVAILABLE', message: '当前 Sidecar 未启用工作区归档能力。' },
+      });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (body['confirmationText'] !== store.meta.displayName)
+      return reply.code(409).send({
+        error: {
+          code: 'WORKSPACE_CONFIRMATION_MISMATCH',
+          message: `请输入完整项目名称“${store.meta.displayName}”以确认归档清空。`,
+        },
+      });
+    lifecycle.requestClear(lifecycle.archivePath);
+    return { accepted: true, mode: 'clear', archivePath: lifecycle.archivePath };
   });
 
   app.post('/api/v2/tools/:name', async (request, reply) => {
@@ -207,6 +248,12 @@ export function buildSidecar(store: V2Store): FastifyInstance {
 
   return app;
 }
+
+export {
+  archiveWorkspace,
+  createWorkspaceArchivePath,
+  scheduleWorkspaceArchive,
+} from './archive.js';
 
 function required(value: Record<string, unknown>, key: string): string {
   const item = value[key];

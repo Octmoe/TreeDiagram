@@ -167,6 +167,54 @@ describe('MCP and Sidecar transports', () => {
     }
   });
 
+  it('requires an exact project-name confirmation before scheduling workspace archival', async () => {
+    const store = createStore();
+    const calls: string[] = [];
+    const archivePath = join(tmpdir(), 'project', '.treediagram-archive', 'fixture');
+    const app = buildSidecar(store, {
+      projectRoot: join(tmpdir(), 'project'),
+      archivePath,
+      requestClose: () => calls.push('close'),
+      requestClear: (path) => calls.push(`clear:${path}`),
+    });
+    try {
+      const bootstrap = await app.inject({
+        method: 'GET',
+        url: '/api/v2/bootstrap?hostKind=codex&hostSessionRef=session-a&clientRef=client-a',
+      });
+      expect(bootstrap.json().lifecycle).toEqual(
+        expect.objectContaining({
+          available: true,
+          archivePath,
+          confirmationText: 'MCP contract',
+        }),
+      );
+
+      const rejected = await app.inject({
+        method: 'POST',
+        url: '/api/v2/workspace/clear',
+        payload: { confirmationText: 'wrong project' },
+      });
+      expect(rejected.statusCode).toBe(409);
+      expect(calls).toEqual([]);
+
+      const accepted = await app.inject({
+        method: 'POST',
+        url: '/api/v2/workspace/clear',
+        payload: { confirmationText: 'MCP contract' },
+      });
+      expect(accepted.json()).toEqual({ accepted: true, mode: 'clear', archivePath });
+      expect(calls).toEqual([`clear:${archivePath}`]);
+
+      const closed = await app.inject({ method: 'POST', url: '/api/v2/workspace/close' });
+      expect(closed.json()).toEqual({ accepted: true, mode: 'close' });
+      expect(calls).toEqual([`clear:${archivePath}`, 'close']);
+    } finally {
+      await app.close();
+      store.close();
+    }
+  });
+
   it('serves the same tools over Streamable HTTP', async () => {
     const store = createStore();
     const app = buildSidecar(store);

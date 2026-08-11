@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, uptime } from 'node:os';
 import { AttentionService } from '@treediagram/attention';
@@ -7,6 +7,7 @@ import { CHANGESET_LEASE_IDLE_TIMEOUT_MS } from '@treediagram/contracts';
 import { DomainError } from '@treediagram/domain';
 import { initializeWorkspace, V2Store } from '@treediagram/storage-sqlite';
 import { ToolService } from '@treediagram/mcp';
+import { archiveWorkspace, createWorkspaceArchivePath } from '@treediagram/sidecar/server';
 
 const tempDirs: string[] = [];
 const workspace = () => {
@@ -20,6 +21,21 @@ afterEach(() => {
 });
 
 describe('V2 workspace lifecycle', () => {
+  it('moves cleared workspace state into a project-local archive without deleting history', () => {
+    const dir = workspace();
+    const statePath = join(dir, '.treediagram');
+    const archivePath = createWorkspaceArchivePath(
+      dir,
+      'a761884f-45dc-4c32-a0b4-0ca8737fe49b',
+      new Date('2026-08-11T08:09:10.000Z'),
+    );
+    expect(archivePath).toBe(join(dir, '.treediagram-archive', '20260811T080910Z-a761884f'));
+    expect(archiveWorkspace(dir, archivePath)).toBe(archivePath);
+    expect(existsSync(statePath)).toBe(false);
+    expect(existsSync(join(archivePath, 'workspace.json'))).toBe(true);
+    expect(existsSync(join(archivePath, 'state-v2.sqlite'))).toBe(true);
+  });
+
   it('refuses a legacy workspace without modifying it', () => {
     const dir = mkdtempSync(join(tmpdir(), 'treediagram-legacy-guard-'));
     tempDirs.push(dir);
