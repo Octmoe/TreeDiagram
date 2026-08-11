@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Refactor TreeDiagram'
+  short_description: 'Split composite nodes across the design tree'
+  default_prompt: 'Use $treediagram-refactor to split every high-confidence composite node and cross-check the whole TreeDiagram.'
