@@ -8,6 +8,7 @@ const pluginRoot = join(root, 'plugins', 'treediagram');
 const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
 const marketplaceName = 'treediagram-local';
 const pluginName = 'treediagram';
+const codexCommand = process.platform === 'win32' ? 'codex.exe' : 'codex';
 const action = process.argv[2];
 const noCodex = process.argv.includes('--no-codex');
 
@@ -25,7 +26,7 @@ function run(command, args, options = {}) {
     windowsHide: true,
   });
   if (result.error) {
-    const hint = command === 'codex' ? '；请确认 Codex CLI 已安装并可从终端运行' : '';
+    const hint = command === codexCommand ? '；请确认 Codex CLI 已安装并可从终端运行' : '';
     throw new Error(`${command} 启动失败${hint}：${result.error.message}`);
   }
   if (result.status !== 0 && !options.allowFailure) {
@@ -122,7 +123,7 @@ function prepareAndInstall() {
       return;
     }
 
-    const marketplace = run('codex', ['plugin', 'marketplace', 'add', root], {
+    const marketplace = run(codexCommand, ['plugin', 'marketplace', 'add', root], {
       capture: true,
       allowFailure: true,
     });
@@ -135,7 +136,7 @@ function prepareAndInstall() {
       }
     }
 
-    run('codex', ['plugin', 'add', `${pluginName}@${marketplaceName}`]);
+    run(codexCommand, ['plugin', 'add', `${pluginName}@${marketplaceName}`]);
     console.log('TreeDiagram 已安装。请新建 Codex 任务以加载更新后的 Skills、Hook 与 MCP。');
   } finally {
     writeFileSync(manifestPath, original, 'utf8');
