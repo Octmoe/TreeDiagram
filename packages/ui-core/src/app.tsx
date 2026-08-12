@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import {
   hasDesignRootRole,
   type AttentionContext,
@@ -110,10 +120,47 @@ const EXISTING_DESIGN_ORGANIZE_ACTION = {
 } as const;
 
 type ThemeMode = 'dark' | 'light';
+type WorkspaceDivider = 'tree-inspector' | 'inspector-changes';
+type WorkspaceLayout = { tree: number; inspector: number; changes: number };
+
+const WORKSPACE_LAYOUT_KEY = 'treediagram-workspace-layout-v1';
+const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
+  tree: 0.255,
+  inspector: 0.427,
+  changes: 0.318,
+};
 
 function readThemePreference(): ThemeMode {
   if (typeof window === 'undefined') return 'dark';
   return window.localStorage.getItem('treediagram-theme') === 'light' ? 'light' : 'dark';
+}
+
+function normalizeWorkspaceLayout(value: WorkspaceLayout): WorkspaceLayout {
+  const total = value.tree + value.inspector + value.changes;
+  return {
+    tree: value.tree / total,
+    inspector: value.inspector / total,
+    changes: value.changes / total,
+  };
+}
+
+function readWorkspaceLayout(): WorkspaceLayout {
+  if (typeof window === 'undefined') return DEFAULT_WORKSPACE_LAYOUT;
+  try {
+    const value = JSON.parse(
+      window.localStorage.getItem(WORKSPACE_LAYOUT_KEY) ?? '',
+    ) as Partial<WorkspaceLayout>;
+    const layout = {
+      tree: Number(value.tree),
+      inspector: Number(value.inspector),
+      changes: Number(value.changes),
+    };
+    if (Object.values(layout).every((part) => Number.isFinite(part) && part >= 0.12))
+      return normalizeWorkspaceLayout(layout);
+  } catch {
+    // Invalid or legacy preferences fall back to the product default.
+  }
+  return DEFAULT_WORKSPACE_LAYOUT;
 }
 
 function initials(type: string): string {
@@ -319,6 +366,7 @@ function useSidecar(api: SidecarApi, identity: UiIdentity) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | null>(null);
 
   const refresh = useCallback(
     async (quiet = false) => {
@@ -350,6 +398,12 @@ function useSidecar(api: SidecarApi, identity: UiIdentity) {
     }, 1800);
     return () => window.clearInterval(timer);
   }, [api, data, refresh]);
+  useEffect(
+    () => () => {
+      if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
 
   const run = useCallback(
     async <T,>(work: () => Promise<T>, message?: string): Promise<T | null> => {
@@ -357,8 +411,12 @@ function useSidecar(api: SidecarApi, identity: UiIdentity) {
         const result = await work();
         await refresh(true);
         if (message) {
+          if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
           setNotice(message);
-          window.setTimeout(() => setNotice(null), 2600);
+          noticeTimer.current = window.setTimeout(() => {
+            setNotice(null);
+            noticeTimer.current = null;
+          }, 2600);
         }
         return result;
       } catch (cause) {
@@ -1685,6 +1743,15 @@ export function TreeDiagramApp({
   const [inspectedChangeId, setInspectedChangeId] = useState<string | null>(null);
   const [previewedChangeId, setPreviewedChangeId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(readThemePreference);
+  const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(readWorkspaceLayout);
+  const [activeDivider, setActiveDivider] = useState<WorkspaceDivider | null>(null);
+  const workspaceRef = useRef<HTMLElement | null>(null);
+  const dividerDrag = useRef<{
+    divider: WorkspaceDivider;
+    pointerId: number;
+    startX: number;
+    widths: WorkspaceLayout;
+  } | null>(null);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [lifecycleDialog, setLifecycleDialog] = useState<'close' | 'clear' | null>(null);
   const [confirmationText, setConfirmationText] = useState('');
@@ -1700,6 +1767,98 @@ export function TreeDiagramApp({
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('treediagram-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(workspaceLayout));
+  }, [workspaceLayout]);
+
+  const workspacePanelWidths = useCallback((): WorkspaceLayout | null => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return null;
+    const tree = workspace.querySelector<HTMLElement>('.tree-panel')?.getBoundingClientRect().width;
+    const inspector = workspace
+      .querySelector<HTMLElement>('.inspector')
+      ?.getBoundingClientRect().width;
+    const changes = workspace
+      .querySelector<HTMLElement>('.changes-panel')
+      ?.getBoundingClientRect().width;
+    return tree && inspector && changes ? { tree, inspector, changes } : null;
+  }, []);
+
+  const resizeWorkspace = useCallback(
+    (divider: WorkspaceDivider, widths: WorkspaceLayout, delta: number) => {
+      const workspace = workspaceRef.current;
+      if (!workspace) return;
+      const styles = window.getComputedStyle(workspace);
+      const minimum = {
+        tree: Number.parseFloat(styles.getPropertyValue('--tree-panel-min')) || 250,
+        inspector: Number.parseFloat(styles.getPropertyValue('--inspector-panel-min')) || 420,
+        changes: Number.parseFloat(styles.getPropertyValue('--changes-panel-min')) || 300,
+      };
+      const next = { ...widths };
+      if (divider === 'tree-inspector') {
+        const pairWidth = widths.tree + widths.inspector;
+        next.tree = Math.min(
+          Math.max(widths.tree + delta, minimum.tree),
+          pairWidth - minimum.inspector,
+        );
+        next.inspector = pairWidth - next.tree;
+      } else {
+        const pairWidth = widths.inspector + widths.changes;
+        next.inspector = Math.min(
+          Math.max(widths.inspector + delta, minimum.inspector),
+          pairWidth - minimum.changes,
+        );
+        next.changes = pairWidth - next.inspector;
+      }
+      setWorkspaceLayout(normalizeWorkspaceLayout(next));
+    },
+    [],
+  );
+
+  const beginWorkspaceResize = (
+    divider: WorkspaceDivider,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    if (event.button !== 0) return;
+    const widths = workspacePanelWidths();
+    if (!widths) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dividerDrag.current = {
+      divider,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      widths,
+    };
+    setActiveDivider(divider);
+  };
+
+  const continueWorkspaceResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dividerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    resizeWorkspace(drag.divider, drag.widths, event.clientX - drag.startX);
+  };
+
+  const endWorkspaceResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dividerDrag.current?.pointerId !== event.pointerId) return;
+    dividerDrag.current = null;
+    setActiveDivider(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const resizeWorkspaceFromKeyboard = (
+    divider: WorkspaceDivider,
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const widths = workspacePanelWidths();
+    if (!widths) return;
+    event.preventDefault();
+    resizeWorkspace(divider, widths, event.key === 'ArrowLeft' ? -20 : 20);
+  };
+
+  const resetWorkspaceLayout = () => setWorkspaceLayout(DEFAULT_WORKSPACE_LAYOUT);
 
   const selectNode = (nodeId: string, event: MouseEvent) => {
     if (!data) return;
@@ -1988,7 +2147,17 @@ export function TreeDiagramApp({
           }
         />
       ) : null}
-      <main className="design-workspace">
+      <main
+        ref={workspaceRef}
+        className={`design-workspace ${activeDivider ? 'is-resizing' : ''}`}
+        style={
+          {
+            '--tree-column': `${workspaceLayout.tree}fr`,
+            '--inspector-column': `${workspaceLayout.inspector}fr`,
+            '--changes-column': `${workspaceLayout.changes}fr`,
+          } as CSSProperties
+        }
+      >
         <DesignTree
           nodes={data.nodes}
           relations={data.relations}
@@ -1998,6 +2167,21 @@ export function TreeDiagramApp({
           onInspectCandidate={selectCandidate}
           onSelect={selectNode}
           onPin={pinNode}
+        />
+        <button
+          className={`workspace-resizer ${activeDivider === 'tree-inspector' ? 'active' : ''}`}
+          type="button"
+          role="separator"
+          aria-label="调整设计树与节点详情宽度"
+          aria-orientation="vertical"
+          aria-valuenow={Math.round(workspaceLayout.tree * 100)}
+          title="拖动调整两栏宽度；双击恢复默认布局"
+          onPointerDown={(event) => beginWorkspaceResize('tree-inspector', event)}
+          onPointerMove={continueWorkspaceResize}
+          onPointerUp={endWorkspaceResize}
+          onPointerCancel={endWorkspaceResize}
+          onKeyDown={(event) => resizeWorkspaceFromKeyboard('tree-inspector', event)}
+          onDoubleClick={resetWorkspaceLayout}
         />
         <Inspector
           node={primary}
@@ -2015,6 +2199,21 @@ export function TreeDiagramApp({
             )
           }
           onPrompt={(intent) => void copyPrompt(intent)}
+        />
+        <button
+          className={`workspace-resizer ${activeDivider === 'inspector-changes' ? 'active' : ''}`}
+          type="button"
+          role="separator"
+          aria-label="调整节点详情与候选变更宽度"
+          aria-orientation="vertical"
+          aria-valuenow={Math.round((workspaceLayout.tree + workspaceLayout.inspector) * 100)}
+          title="拖动调整两栏宽度；双击恢复默认布局"
+          onPointerDown={(event) => beginWorkspaceResize('inspector-changes', event)}
+          onPointerMove={continueWorkspaceResize}
+          onPointerUp={endWorkspaceResize}
+          onPointerCancel={endWorkspaceResize}
+          onKeyDown={(event) => resizeWorkspaceFromKeyboard('inspector-changes', event)}
+          onDoubleClick={resetWorkspaceLayout}
         />
         <ChangePanel
           data={data}

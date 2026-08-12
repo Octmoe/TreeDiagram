@@ -343,6 +343,62 @@ test('Sidecar preserves usable hierarchy at the compact breakpoint', async ({ pa
   await expect(page.locator('.inspector h1')).toBeVisible();
 });
 
+test('Sidecar supports persistent resizing of all three workspace columns', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (window.sessionStorage.getItem('treediagram-layout-test-ready')) return;
+    window.localStorage.removeItem('treediagram-workspace-layout-v1');
+    window.sessionStorage.setItem('treediagram-layout-test-ready', 'true');
+  });
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await page.goto('/?host=codex&session=e2e-resizable-columns');
+
+  const tree = page.locator('.tree-panel');
+  const inspector = page.locator('.inspector');
+  const changes = page.locator('.changes-panel');
+  const firstDivider = page.getByRole('separator', {
+    name: '调整设计树与节点详情宽度',
+  });
+  const secondDivider = page.getByRole('separator', {
+    name: '调整节点详情与候选变更宽度',
+  });
+  const initialTree = (await tree.boundingBox())!;
+  const initialInspector = (await inspector.boundingBox())!;
+  const initialChanges = (await changes.boundingBox())!;
+
+  const firstBox = (await firstDivider.boundingBox())!;
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(firstBox.x + firstBox.width / 2 + 90, firstBox.y + 100, { steps: 6 });
+  await page.mouse.up();
+  expect((await tree.boundingBox())!.width).toBeGreaterThan(initialTree.width + 70);
+  expect((await inspector.boundingBox())!.width).toBeLessThan(initialInspector.width - 70);
+  expect(Math.abs((await changes.boundingBox())!.width - initialChanges.width)).toBeLessThan(4);
+
+  const secondBox = (await secondDivider.boundingBox())!;
+  const beforeSecondInspector = (await inspector.boundingBox())!;
+  const beforeSecondChanges = (await changes.boundingBox())!;
+  await page.mouse.move(secondBox.x + secondBox.width / 2, secondBox.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(secondBox.x + secondBox.width / 2 - 70, secondBox.y + 100, { steps: 6 });
+  await page.mouse.up();
+  expect((await inspector.boundingBox())!.width).toBeLessThan(beforeSecondInspector.width - 50);
+  expect((await changes.boundingBox())!.width).toBeGreaterThan(beforeSecondChanges.width + 50);
+
+  const savedWidths = {
+    tree: (await tree.boundingBox())!.width,
+    inspector: (await inspector.boundingBox())!.width,
+    changes: (await changes.boundingBox())!.width,
+  };
+  await page.reload();
+  await expect(firstDivider).toBeVisible();
+  expect(Math.abs((await tree.boundingBox())!.width - savedWidths.tree)).toBeLessThan(4);
+  expect(Math.abs((await inspector.boundingBox())!.width - savedWidths.inspector)).toBeLessThan(4);
+  expect(Math.abs((await changes.boundingBox())!.width - savedWidths.changes)).toBeLessThan(4);
+
+  await firstDivider.dblclick();
+  expect((await tree.boundingBox())!.width).toBeLessThan(savedWidths.tree - 50);
+});
+
 test('Sidecar supports a persistent light theme', async ({ page }) => {
   await page.goto('/?host=codex&session=e2e-light-theme');
   const themeToggle = page.getByRole('button', { name: '切换到亮色主题' });

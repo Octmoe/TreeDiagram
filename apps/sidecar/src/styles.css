@@ -426,11 +426,56 @@ select:focus-visible {
 }
 
 .design-workspace {
+  --tree-panel-min: 300px;
+  --inspector-panel-min: 460px;
+  --changes-panel-min: 390px;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 0.82fr) minmax(480px, 1.45fr) minmax(330px, 0.93fr);
-  gap: 10px;
+  grid-template-columns:
+    minmax(var(--tree-panel-min), var(--tree-column, 0.255fr)) 10px
+    minmax(var(--inspector-panel-min), var(--inspector-column, 0.427fr)) 10px
+    minmax(var(--changes-panel-min), var(--changes-column, 0.318fr));
+  gap: 0;
   padding: 10px 18px;
+}
+.workspace-resizer {
+  position: relative;
+  z-index: 3;
+  width: 10px;
+  min-width: 10px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+.workspace-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 10px 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--line);
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+.workspace-resizer:hover::before,
+.workspace-resizer:focus-visible::before,
+.workspace-resizer.active::before {
+  background: var(--lime);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--lime) 48%, transparent);
+  transform: scaleX(1.5);
+}
+.workspace-resizer:focus-visible {
+  outline: none;
+}
+.design-workspace.is-resizing,
+.design-workspace.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 .panel-surface {
   min-width: 0;
@@ -2035,7 +2080,10 @@ body {
   grid-template-rows: 64px 72px auto minmax(0, 1fr) 30px;
 }
 .design-workspace {
-  grid-template-columns: minmax(300px, 0.8fr) minmax(460px, 1.34fr) minmax(390px, 1fr);
+  grid-template-columns:
+    minmax(var(--tree-panel-min), var(--tree-column, 0.255fr)) 10px
+    minmax(var(--inspector-panel-min), var(--inspector-column, 0.427fr)) 10px
+    minmax(var(--changes-panel-min), var(--changes-column, 0.318fr));
 }
 .brand small,
 .eyebrow,
@@ -2149,7 +2197,9 @@ body {
     min-width: 980px;
   }
   .design-workspace {
-    grid-template-columns: minmax(250px, 0.75fr) minmax(420px, 1.35fr) minmax(300px, 0.9fr);
+    --tree-panel-min: 250px;
+    --inspector-panel-min: 420px;
+    --changes-panel-min: 300px;
     padding-inline: 10px;
   }
   .topbar,
@@ -2203,6 +2253,9 @@ body {
   .design-workspace {
     grid-template-columns: 1fr;
     grid-template-rows: 420px minmax(500px, auto) 520px;
+  }
+  .workspace-resizer {
+    display: none;
   }
   .statusline {
     min-height: 28px;
