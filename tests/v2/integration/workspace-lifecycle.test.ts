@@ -685,4 +685,167 @@ describe('V2 workspace lifecycle', () => {
       store.close();
     }
   });
+
+  it('approves an entire candidate tree in dependency order with one ChangeSet write', () => {
+    const store = new V2Store(workspace());
+    try {
+      let changeSet = store.beginChangeSet('host-a', 'Batch dependency order').changeSet;
+      const proposeNode = (displayTitle: string, roles: string[] = []) => {
+        const result = store.proposeChange({
+          hostSessionRef: 'host-a',
+          changeSetId: changeSet.id,
+          expectedChangeSetVersion: changeSet.version,
+          operation: 'create_node',
+          payload: {
+            nodeType: roles.includes('root') ? 'goal' : 'constraint',
+            displayTitle,
+            contentText: '',
+            roles,
+            attributes: {},
+            approvalState: 'tentative',
+            epistemicState: roles.includes('root') ? null : 'assumed',
+            reviewState: 'clean',
+          },
+          summary: `Create ${displayTitle}`,
+        });
+        changeSet = result.changeSet;
+        return result;
+      };
+      const proposeRelation = (
+        relationType: 'contains' | 'depends_on',
+        sourceNodeId: string,
+        targetNodeId: string,
+        summary: string,
+      ) => {
+        const result = store.proposeChange({
+          hostSessionRef: 'host-a',
+          changeSetId: changeSet.id,
+          expectedChangeSetVersion: changeSet.version,
+          operation: 'create_relation',
+          payload: {
+            relationType,
+            sourceNodeId,
+            targetNodeId,
+            rationale: summary,
+            reviewState: 'clean',
+          },
+          summary,
+        });
+        changeSet = result.changeSet;
+        return result;
+      };
+
+      // Deliberately propose descendants before their parent so insertion order is unsafe.
+      const child = proposeNode('Batch child');
+      const grandchild = proposeNode('Batch grandchild');
+      const root = proposeNode('Batch root', ['root']);
+      const childContains = proposeRelation(
+        'contains',
+        root.change.entityId,
+        child.change.entityId,
+        'Attach batch child',
+      );
+      const grandchildContains = proposeRelation(
+        'contains',
+        child.change.entityId,
+        grandchild.change.entityId,
+        'Attach batch grandchild',
+      );
+      const semanticRelation = proposeRelation(
+        'depends_on',
+        grandchild.change.entityId,
+        root.change.entityId,
+        'Grandchild depends on root',
+      );
+      const versionBeforeAdoption = changeSet.version;
+
+      const grant = store.issueApprovalGrant('adopt_all', changeSet.id, 'host-a');
+      const result = store.adoptAllChanges('host-a', changeSet.id, grant.token);
+
+      expect(result.adoptionOrder).toEqual([
+        root.change.id,
+        child.change.id,
+        childContains.change.id,
+        grandchild.change.id,
+        grandchildContains.change.id,
+        semanticRelation.change.id,
+      ]);
+      expect(result.changeSet.version).toBe(versionBeforeAdoption + 1);
+      expect(result.changeSet.changes?.filter((change) => change.status === 'proposed')).toEqual(
+        [],
+      );
+      expect(store.getWorkspaceSummary()).toEqual(
+        expect.objectContaining({ nodeCount: 3, relationCount: 3 }),
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  it('rejects a cyclic batch without partially adopting an otherwise ready root', () => {
+    const store = new V2Store(workspace());
+    try {
+      let changeSet = store.beginChangeSet('host-a', 'Atomic cycle rejection').changeSet;
+      const proposeNode = (displayTitle: string, roles: string[] = []) => {
+        const result = store.proposeChange({
+          hostSessionRef: 'host-a',
+          changeSetId: changeSet.id,
+          expectedChangeSetVersion: changeSet.version,
+          operation: 'create_node',
+          payload: {
+            nodeType: roles.length ? 'goal' : 'constraint',
+            displayTitle,
+            contentText: '',
+            roles,
+            attributes: {},
+            approvalState: 'tentative',
+            epistemicState: roles.length ? null : 'assumed',
+            reviewState: 'clean',
+          },
+          summary: `Create ${displayTitle}`,
+        });
+        changeSet = result.changeSet;
+        return result;
+      };
+      const root = proposeNode('Ready root', ['root']);
+      const left = proposeNode('Cycle left');
+      const right = proposeNode('Cycle right');
+      for (const [sourceNodeId, targetNodeId, summary] of [
+        [left.change.entityId, right.change.entityId, 'Left contains right'],
+        [right.change.entityId, left.change.entityId, 'Right contains left'],
+      ] as const) {
+        const result = store.proposeChange({
+          hostSessionRef: 'host-a',
+          changeSetId: changeSet.id,
+          expectedChangeSetVersion: changeSet.version,
+          operation: 'create_relation',
+          payload: {
+            relationType: 'contains',
+            sourceNodeId,
+            targetNodeId,
+            rationale: summary,
+            reviewState: 'clean',
+          },
+          summary,
+        });
+        changeSet = result.changeSet;
+      }
+      const versionBeforeAdoption = changeSet.version;
+      const grant = store.issueApprovalGrant('adopt_all', changeSet.id, 'host-a');
+
+      expect(() => store.adoptAllChanges('host-a', changeSet.id, grant.token)).toThrowError(
+        expect.objectContaining({ code: 'BATCH_DEPENDENCY_CYCLE' }),
+      );
+      const unchanged = store.getChangeSet(changeSet.id);
+      expect(unchanged.changes?.find((change) => change.id === root.change.id)?.status).toBe(
+        'proposed',
+      );
+      expect(unchanged.version).toBe(versionBeforeAdoption);
+      expect(store.getWorkspaceSummary()).toEqual(
+        expect.objectContaining({ nodeCount: 0, relationCount: 0 }),
+      );
+    } finally {
+      store.close();
+    }
+  });
 });

@@ -197,6 +197,10 @@ export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions
       const grant = store.issueApprovalGrant('adopt', targetId, hostSessionRef);
       return store.adoptChange(hostSessionRef, targetId, grant.token);
     }
+    if (action === 'adopt_all') {
+      const grant = store.issueApprovalGrant('adopt_all', targetId, hostSessionRef);
+      return store.adoptAllChanges(hostSessionRef, targetId, grant.token);
+    }
     if (action === 'publish') {
       const grant = store.issueApprovalGrant('publish', targetId, hostSessionRef);
       return store.publishRelease(

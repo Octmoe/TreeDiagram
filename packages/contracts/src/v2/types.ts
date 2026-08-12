@@ -74,6 +74,7 @@ export type ToolErrorCategory = (typeof TOOL_ERROR_CATEGORIES)[number];
 
 export const APPROVAL_ACTIONS = [
   'adopt',
+  'adopt_all',
   'publish',
   'confirm_root',
   'expand_delegation',

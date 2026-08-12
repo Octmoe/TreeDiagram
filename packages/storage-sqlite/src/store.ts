@@ -62,6 +62,13 @@ export interface IssuedGrant {
   grant: ApprovalGrant;
 }
 
+interface BatchAdoptionStep {
+  change: DesignChange;
+  bundledChanges: DesignChange[];
+  dependencies: Set<string>;
+  sourceIndex: number;
+}
+
 export class V2Store {
   readonly connection: Database.Database;
   readonly meta: WorkspaceMeta;
@@ -718,6 +725,30 @@ export class V2Store {
         description: change.summary,
       };
     }
+    if (action === 'adopt_all') {
+      const changeSet = this.getChangeSet(targetId);
+      const pendingChanges = (changeSet.changes ?? [])
+        .filter((change) => change.status === 'proposed')
+        .map((change) => ({
+          id: change.id,
+          operation: change.operation,
+          entityId: change.entityId,
+          baseRevisionId: change.baseRevisionId,
+          payload: change.payload,
+          summary: change.summary,
+          updatedAt: change.updatedAt,
+        }));
+      return {
+        digest: stableDigest({
+          action,
+          changeSetId: targetId,
+          version: changeSet.version,
+          pendingChanges,
+        }),
+        version: changeSet.version,
+        description: `批准 ${changeSet.title} 的全部候选`,
+      };
+    }
     if (action === 'publish') {
       const changeSet = this.getChangeSet(targetId);
       const heads = {
@@ -952,6 +983,54 @@ export class V2Store {
         change: adoptedChange,
         changeSet: this.getChangeSet(change.changeSetId),
         adoptedChanges: [adoptedChange, ...bundledAdopted],
+      };
+    })();
+  }
+
+  adoptAllChanges(
+    hostSessionRef: string,
+    changeSetId: string,
+    approvalToken: string,
+  ): {
+    changeSet: ChangeSet;
+    adoptedChanges: DesignChange[];
+    adoptionOrder: string[];
+  } {
+    return this.connection.transaction(() => {
+      const target = this.getApprovalTarget('adopt_all', changeSetId);
+      this.consumeGrant('adopt_all', approvalToken, target, hostSessionRef);
+      this.assertWriter(changeSetId, hostSessionRef, target.version);
+      const steps = this.planBatchAdoption(changeSetId);
+      const now = nowIso();
+      const adoptionOrder: string[] = [];
+
+      for (const step of steps) {
+        for (const change of [step.change, ...step.bundledChanges]) {
+          this.assertCurrentBase(
+            change.operation,
+            change.entityId,
+            change.baseRevisionId ?? undefined,
+          );
+          const adoptedRevisionId = this.applyChange(change, hostSessionRef);
+          this.connection
+            .prepare(
+              "UPDATE design_change SET status = 'adopted', adopted_revision_id = ?, updated_at = ? WHERE id = ?",
+            )
+            .run(adoptedRevisionId, now, change.id);
+          adoptionOrder.push(change.id);
+        }
+      }
+
+      this.bumpChangeSet(changeSetId, now);
+      this.emit('changeset.updated', {
+        changeSetId,
+        action: 'batch_adopted',
+        changeIds: adoptionOrder,
+      });
+      return {
+        changeSet: this.getChangeSet(changeSetId),
+        adoptedChanges: adoptionOrder.map((changeId) => this.getChange(changeId)),
+        adoptionOrder,
       };
     })();
   }
@@ -1376,6 +1455,270 @@ export class V2Store {
         change.payload['relationType'] === 'contains' &&
         change.payload['targetNodeId'] === targetNodeId,
     );
+  }
+
+  private planBatchAdoption(changeSetId: string): BatchAdoptionStep[] {
+    const proposed = (this.getChangeSet(changeSetId).changes ?? []).filter(
+      (change) => change.status === 'proposed',
+    );
+    if (!proposed.length)
+      throw domainError('BATCH_ADOPT_EMPTY', 'state_conflict', '当前 ChangeSet 没有待批准候选。', {
+        retryable: true,
+        suggestedAction: '刷新 Sidecar 后再检查候选队列。',
+      });
+
+    const changesByEntity = new Map<string, DesignChange[]>();
+    for (const change of proposed) {
+      const kind = change.operation.endsWith('_node') ? 'node' : 'relation';
+      const key = `${kind}:${change.entityId}`;
+      const matches = changesByEntity.get(key) ?? [];
+      matches.push(change);
+      changesByEntity.set(key, matches);
+    }
+    const conflicts = [...changesByEntity.values()].filter((changes) => changes.length > 1);
+    if (conflicts.length)
+      throw domainError(
+        'BATCH_ENTITY_CHANGE_CONFLICT',
+        'state_conflict',
+        `同一实体存在多个互相竞争的待批准候选，无法确定安全采用顺序：${conflicts
+          .flatMap((changes) => changes.map((change) => change.summary))
+          .join('、')}。`,
+        {
+          actual: conflicts.map((changes) =>
+            changes.map((change) => ({
+              id: change.id,
+              operation: change.operation,
+              summary: change.summary,
+            })),
+          ),
+          retryable: true,
+          suggestedAction: '先修订或丢弃同一实体上的冲突候选，再重新一键批准。',
+        },
+      );
+
+    const workingNodes = this.listNodes('working');
+    const workingNodeIds = new Set(workingNodes.map((node) => node.node.id));
+    const nodeCandidates = proposed.filter((change) => change.operation === 'create_node');
+    const nodeCandidateByEntityId = new Map(
+      nodeCandidates.map((change) => [change.entityId, change]),
+    );
+    const rootNodeIds = new Set([
+      ...workingNodes
+        .filter((node) => hasDesignRootRole(node.revision.roles))
+        .map((node) => node.node.id),
+      ...nodeCandidates
+        .filter((change) => {
+          const roles = Array.isArray(change.payload['roles']) ? change.payload['roles'] : [];
+          return hasDesignRootRole(roles);
+        })
+        .map((change) => change.entityId),
+    ]);
+    const rootAttachments = proposed.filter(
+      (change) =>
+        change.operation === 'create_relation' &&
+        change.payload['relationType'] === 'contains' &&
+        rootNodeIds.has(String(change.payload['targetNodeId'] ?? '')),
+    );
+    if (rootAttachments.length)
+      throw domainError(
+        'ROOT_CONTAINS_PARENT_FORBIDDEN',
+        'state_conflict',
+        `根节点不能作为 contains 子节点批量采用：${rootAttachments
+          .map((change) => change.summary)
+          .join('、')}。`,
+        {
+          actual: rootAttachments.map((change) => ({ id: change.id, summary: change.summary })),
+          retryable: true,
+          suggestedAction: '丢弃或修订指向根节点的 contains 候选后重试。',
+        },
+      );
+
+    const removedNodeIds = new Set(
+      proposed
+        .filter((change) => change.operation === 'remove_node')
+        .map((change) => change.entityId),
+    );
+    const workingRelationById = new Map(
+      this.listRelations('working').map((relation) => [relation.relation.id, relation]),
+    );
+    const relationRemovalConflicts = proposed.flatMap((change) => {
+      if (change.operation !== 'create_relation' && change.operation !== 'revise_relation')
+        return [];
+      const existing = workingRelationById.get(change.entityId)?.relation;
+      const sourceNodeId =
+        typeof change.payload['sourceNodeId'] === 'string'
+          ? change.payload['sourceNodeId']
+          : existing?.sourceNodeId;
+      const targetNodeId =
+        typeof change.payload['targetNodeId'] === 'string'
+          ? change.payload['targetNodeId']
+          : existing?.targetNodeId;
+      const removedEndpointIds = [sourceNodeId, targetNodeId].filter(
+        (nodeId): nodeId is string => typeof nodeId === 'string' && removedNodeIds.has(nodeId),
+      );
+      return removedEndpointIds.length ? [{ change, removedEndpointIds }] : [];
+    });
+    if (relationRemovalConflicts.length)
+      throw domainError(
+        'BATCH_RELATION_REMOVED_ENDPOINT_CONFLICT',
+        'state_conflict',
+        `待新增或修订的关系引用了本批次将被移除的节点：${relationRemovalConflicts
+          .map(({ change }) => change.summary)
+          .join('、')}。`,
+        {
+          actual: relationRemovalConflicts.map(({ change, removedEndpointIds }) => ({
+            changeId: change.id,
+            summary: change.summary,
+            removedEndpointIds,
+          })),
+          retryable: true,
+          suggestedAction: '修订或丢弃冲突的关系候选与节点移除候选后重试。',
+        },
+      );
+    const bundledByNodeChangeId = new Map<string, DesignChange[]>();
+    const bundledChangeIds = new Set<string>();
+
+    for (const nodeChange of nodeCandidates) {
+      const roles = Array.isArray(nodeChange.payload['roles']) ? nodeChange.payload['roles'] : [];
+      if (hasDesignRootRole(roles)) {
+        bundledByNodeChangeId.set(nodeChange.id, []);
+        continue;
+      }
+      const attachments = this.proposedContainsAttachments(changeSetId, nodeChange.entityId);
+      if (attachments.length !== 1)
+        throw domainError(
+          attachments.length ? 'CONTAINS_PARENT_AMBIGUOUS' : 'CONTAINS_PARENT_REQUIRED',
+          'state_conflict',
+          attachments.length
+            ? `候选“${nodeChange.summary}”存在多个 contains 父节点。`
+            : `候选“${nodeChange.summary}”缺少 contains 父节点。`,
+          {
+            actual: {
+              nodeChangeId: nodeChange.id,
+              containsChangeIds: attachments.map((change) => change.id),
+            },
+            expected: 1,
+            retryable: true,
+            suggestedAction: attachments.length
+              ? '只保留一条指向该子节点的 contains 候选。'
+              : '补充一条从预期父节点指向该子节点的 contains 候选。',
+          },
+        );
+      bundledByNodeChangeId.set(nodeChange.id, attachments);
+      bundledChangeIds.add(attachments[0]!.id);
+    }
+
+    const steps: BatchAdoptionStep[] = proposed
+      .map((change, sourceIndex) => ({ change, sourceIndex }))
+      .filter(({ change }) => !bundledChangeIds.has(change.id))
+      .map(({ change, sourceIndex }) => ({
+        change,
+        bundledChanges: bundledByNodeChangeId.get(change.id) ?? [],
+        dependencies: new Set<string>(),
+        sourceIndex,
+      }));
+    const stepById = new Map(steps.map((step) => [step.change.id, step]));
+
+    const requireNode = (step: BatchAdoptionStep, nodeId: unknown, role: string): void => {
+      if (typeof nodeId !== 'string' || !nodeId)
+        throw domainError(
+          'BATCH_DEPENDENCY_INVALID',
+          'state_conflict',
+          `候选“${step.change.summary}”的${role}无效。`,
+          {
+            actual: nodeId,
+            retryable: true,
+            suggestedAction: '修订该候选的节点引用后重试。',
+          },
+        );
+      if (workingNodeIds.has(nodeId)) return;
+      const dependency = nodeCandidateByEntityId.get(nodeId);
+      if (!dependency)
+        throw domainError(
+          'BATCH_DEPENDENCY_UNRESOLVED',
+          'state_conflict',
+          `候选“${step.change.summary}”引用的${role}尚未进入 Working State，也没有对应节点候选。`,
+          {
+            actual: nodeId,
+            retryable: true,
+            suggestedAction: '补充对应节点候选，或把引用改为现有 Working 节点。',
+          },
+        );
+      step.dependencies.add(dependency.id);
+    };
+
+    for (const step of steps) {
+      if (step.change.operation === 'create_node' && step.bundledChanges.length === 1) {
+        requireNode(step, step.bundledChanges[0]!.payload['sourceNodeId'], 'contains 父节点');
+      }
+      if (step.change.operation === 'create_relation') {
+        requireNode(step, step.change.payload['sourceNodeId'], '关系起点');
+        requireNode(step, step.change.payload['targetNodeId'], '关系终点');
+      }
+    }
+
+    const operationRank: Record<DesignChange['operation'], number> = {
+      create_node: 0,
+      revise_node: 1,
+      create_relation: 2,
+      revise_relation: 3,
+      remove_relation: 4,
+      remove_node: 5,
+    };
+    const compareSteps = (left: BatchAdoptionStep, right: BatchAdoptionStep) =>
+      operationRank[left.change.operation] - operationRank[right.change.operation] ||
+      left.sourceIndex - right.sourceIndex ||
+      left.change.id.localeCompare(right.change.id);
+    const remainingDependencies = new Map(
+      steps.map((step) => [step.change.id, new Set(step.dependencies)]),
+    );
+    const ordered: BatchAdoptionStep[] = [];
+
+    while (ordered.length < steps.length) {
+      const ready = steps
+        .filter(
+          (step) =>
+            remainingDependencies.has(step.change.id) &&
+            remainingDependencies.get(step.change.id)!.size === 0,
+        )
+        .sort(compareSteps)[0];
+      if (!ready) {
+        const blocked = steps
+          .filter((step) => remainingDependencies.has(step.change.id))
+          .map((step) => ({
+            changeId: step.change.id,
+            summary: step.change.summary,
+            dependsOnChangeIds: [...remainingDependencies.get(step.change.id)!],
+          }));
+        throw domainError(
+          'BATCH_DEPENDENCY_CYCLE',
+          'state_conflict',
+          `候选依赖图存在环，无法生成安全的批准顺序：${blocked
+            .map((item) => item.summary)
+            .join('、')}。`,
+          {
+            actual: blocked,
+            retryable: true,
+            suggestedAction: '修订或丢弃形成父子环的 contains 候选后重试。',
+          },
+        );
+      }
+      ordered.push(ready);
+      remainingDependencies.delete(ready.change.id);
+      for (const dependencies of remainingDependencies.values())
+        dependencies.delete(ready.change.id);
+    }
+
+    for (const step of ordered)
+      for (const dependencyId of step.dependencies)
+        if (!stepById.has(dependencyId))
+          throw domainError(
+            'BATCH_DEPENDENCY_UNRESOLVED',
+            'state_conflict',
+            '候选依赖指向了不在本批次中的变更。',
+            { actual: dependencyId, retryable: true },
+          );
+    return ordered;
   }
 
   private assertRelationEndpointsResolvable(
