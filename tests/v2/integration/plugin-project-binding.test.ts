@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -19,6 +27,7 @@ interface RuntimeResult {
 }
 
 interface PluginRuntime {
+  computeRuntimeGeneration(pluginRoot: string, runtimeRoot: string): string;
   ensureProject(options: {
     projectRoot: string;
     runtimeRoot: string;
@@ -68,6 +77,29 @@ afterEach(async () => {
 });
 
 describe('Codex plugin project binding', () => {
+  it('changes the runtime generation when compiled runtime contents change', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'treediagram-runtime-fingerprint-'));
+    projectRoots.push(fixtureRoot);
+    const fixturePlugin = join(fixtureRoot, 'plugin');
+    const fixtureRuntime = join(fixtureRoot, 'runtime');
+    mkdirSync(join(fixturePlugin, '.codex-plugin'), { recursive: true });
+    mkdirSync(join(fixtureRuntime, 'packages', 'storage-sqlite', 'dist'), { recursive: true });
+    writeFileSync(
+      join(fixturePlugin, '.codex-plugin', 'plugin.json'),
+      JSON.stringify({ version: '2.0.0-test' }),
+    );
+    const storeOutput = join(fixtureRuntime, 'packages', 'storage-sqlite', 'dist', 'store.js');
+    writeFileSync(storeOutput, 'export const generation = 1;');
+
+    const first = runtime.computeRuntimeGeneration(fixturePlugin, fixtureRuntime);
+    writeFileSync(storeOutput, 'export const generation = 2;');
+    const second = runtime.computeRuntimeGeneration(fixturePlugin, fixtureRuntime);
+
+    expect(first).toMatch(/^2\.0\.0-test#[a-f0-9]{16}$/);
+    expect(second).toMatch(/^2\.0\.0-test#[a-f0-9]{16}$/);
+    expect(second).not.toBe(first);
+  });
+
   it('generates an absolute bundled MCP launcher for the local Codex install', () => {
     const pluginRoot = join(repoRoot, 'plugins', 'treediagram');
     const config = createLocalMcpManifest(pluginRoot);

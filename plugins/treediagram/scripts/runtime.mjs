@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -51,6 +52,41 @@ function pluginGeneration(root = pluginRoot) {
     readJson(join(root, 'package.json'))?.version ??
     'development'
   );
+}
+
+const RUNTIME_GENERATION_DIRECTORIES = [
+  ['packages', 'contracts', 'dist'],
+  ['packages', 'domain', 'dist'],
+  ['packages', 'storage-sqlite', 'dist'],
+  ['packages', 'attention', 'dist'],
+  ['packages', 'mcp', 'dist'],
+  ['apps', 'sidecar', 'dist', 'server'],
+  ['apps', 'sidecar', 'dist-web'],
+];
+
+function runtimeFiles(directory) {
+  if (!existsSync(directory)) return [];
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...runtimeFiles(path));
+    else if (entry.isFile()) files.push(path);
+  }
+  return files;
+}
+
+export function computeRuntimeGeneration(root = pluginRoot, runtimeRoot) {
+  const digest = createHash('sha256');
+  const files = RUNTIME_GENERATION_DIRECTORIES.flatMap((segments) =>
+    runtimeFiles(join(runtimeRoot, ...segments)),
+  ).sort((left, right) => left.localeCompare(right));
+  for (const path of files) {
+    digest.update(path.slice(runtimeRoot.length).replaceAll('\\', '/'));
+    digest.update('\0');
+    digest.update(readFileSync(path));
+    digest.update('\0');
+  }
+  return `${pluginGeneration(root)}#${digest.digest('hex').slice(0, 16)}`;
 }
 
 function runtimeCandidates(root) {
@@ -303,7 +339,8 @@ export async function ensureProject(options = {}) {
     : resolveRuntimeRoot(options.pluginRoot ?? pluginRoot);
   const entries = ensureRuntime(runtimeRoot);
   const runtimeGeneration =
-    options.runtimeGeneration ?? pluginGeneration(options.pluginRoot ?? pluginRoot);
+    options.runtimeGeneration ??
+    computeRuntimeGeneration(options.pluginRoot ?? pluginRoot, runtimeRoot);
   const paths = workspacePaths(projectRoot);
   mkdirSync(paths.stateDir, { recursive: true });
 

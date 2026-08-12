@@ -355,11 +355,11 @@ function useSidecar(api: SidecarApi, identity: UiIdentity) {
     async <T,>(work: () => Promise<T>, message?: string): Promise<T | null> => {
       try {
         const result = await work();
+        await refresh(true);
         if (message) {
           setNotice(message);
           window.setTimeout(() => setNotice(null), 2600);
         }
-        await refresh(true);
         return result;
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
