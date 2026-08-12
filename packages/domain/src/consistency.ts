@@ -1,8 +1,9 @@
-import type {
-  ConsistencyIssue,
-  NodeDetail,
-  RelationDetail,
-  ValidationResult,
+import {
+  hasDesignRootRole,
+  type ConsistencyIssue,
+  type NodeDetail,
+  type RelationDetail,
+  type ValidationResult,
 } from '@treediagram/contracts';
 
 const ROOT_TYPES = new Set(['goal', 'claim', 'constraint']);
@@ -14,7 +15,7 @@ export function checkConsistency(
 ): ValidationResult {
   const issues: ConsistencyIssue[] = [];
   const nodeById = new Map(nodes.map((detail) => [detail.node.id, detail]));
-  const roots = nodes.filter((detail) => detail.revision.roles.includes('root'));
+  const roots = nodes.filter((detail) => hasDesignRootRole(detail.revision.roles));
 
   if (roots.length === 0) {
     issues.push({
@@ -123,7 +124,7 @@ export function checkConsistency(
   }
   for (const node of nodes) {
     const parentCount = parentCounts.get(node.node.id) ?? 0;
-    const isRoot = node.revision.roles.includes('root');
+    const isRoot = hasDesignRootRole(node.revision.roles);
     if (!isRoot && parentCount === 0)
       issues.push({
         code: 'CONTAINS_PARENT_MISSING',

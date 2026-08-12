@@ -1,6 +1,12 @@
 export const WORKSPACE_FORMAT = 'treediagram-v2' as const;
 export const WORKSPACE_VERSION = 2 as const;
 
+export const DESIGN_ROOT_ROLES = ['root', 'design-root'] as const;
+
+export function hasDesignRootRole(roles: readonly string[]): boolean {
+  return DESIGN_ROOT_ROLES.some((role) => roles.includes(role));
+}
+
 export const NODE_TYPES = [
   'topic',
   'claim',

@@ -11,7 +11,7 @@
 - 每个 Workspace 最多一个 `open|ready` ChangeSet。候选 DesignChange 独立经历
   `proposed -> adopted|discarded`；采用会原子写入 Revision 与 Working Head，未采用候选不进入 Release。
 - ChangeSet 在所有已采用内容通过一致性检查后可进入 `ready`；发布后进入 `published` 并释放 lease。
-- 根节点定义为带 `root` role 的 Node；首个 Release 必须恰有一个 `user_confirmed` 的 goal/claim/constraint
+- 根节点定义为带 `root` role 的 Node，兼容已有的 `design-root` 别名；它没有 `contains` 父节点。首个 Release 必须恰有一个 `user_confirmed` 的 goal/claim/constraint
   根节点。V2.0 首版保持单根以降低歧义。
 - 删除采用 tombstone 表达，不物理删除 Node/Relation/Revision；历史 Release 永远可重建。
 

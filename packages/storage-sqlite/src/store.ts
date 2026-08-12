@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { uptime } from 'node:os';
 import {
   CHANGESET_LEASE_HANDOFF_TIMEOUT_MS,
+  hasDesignRootRole,
   type ApprovalAction,
   type ApprovalGrant,
   type ChangeSet,
@@ -845,7 +846,7 @@ export class V2Store {
             candidate.status === 'proposed' &&
             candidate.operation === 'create_node' &&
             candidate.entityId === change.payload['targetNodeId'] &&
-            !roles.includes('root')
+            !hasDesignRootRole(roles)
           );
         })
       )
@@ -862,7 +863,7 @@ export class V2Store {
       let bundledContains: DesignChange[] = [];
       if (change.operation === 'create_node') {
         const roles = Array.isArray(change.payload['roles']) ? change.payload['roles'] : [];
-        const isRoot = roles.includes('root');
+        const isRoot = hasDesignRootRole(roles);
         bundledContains = this.proposedContainsAttachments(change.changeSetId, change.entityId);
         if (!isRoot && bundledContains.length !== 1)
           throw domainError(
@@ -966,11 +967,16 @@ export class V2Store {
       const changeSet = this.getChangeSet();
       this.assertWriter(changeSet.id, hostSessionRef, target.version);
       const current = this.getNode(nodeId);
-      if (!current.revision.roles.includes('root'))
-        throw domainError('NODE_NOT_ROOT', 'agent_recoverable', '只能确认带 root role 的节点。', {
-          actual: nodeId,
-          retryable: true,
-        });
+      if (!hasDesignRootRole(current.revision.roles))
+        throw domainError(
+          'NODE_NOT_ROOT',
+          'agent_recoverable',
+          '只能确认带 root 或 design-root role 的节点。',
+          {
+            actual: nodeId,
+            retryable: true,
+          },
+        );
       const revisionId = randomUUID();
       const now = nowIso();
       this.connection
@@ -1227,7 +1233,9 @@ export class V2Store {
       row,
       nodes.map((item) => item.revision.id),
       relations.map((item) => item.revision.id),
-      nodes.filter((item) => item.revision.roles.includes('root')).map((item) => item.revision.id),
+      nodes
+        .filter((item) => hasDesignRootRole(item.revision.roles))
+        .map((item) => item.revision.id),
     );
   }
 

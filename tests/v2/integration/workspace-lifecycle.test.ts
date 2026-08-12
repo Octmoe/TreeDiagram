@@ -21,6 +21,44 @@ afterEach(() => {
 });
 
 describe('V2 workspace lifecycle', () => {
+  it('allows a design-root candidate to be adopted without a parent in an empty tree', () => {
+    const store = new V2Store(workspace());
+    try {
+      let changeSet = store.beginChangeSet('host-a', 'Create compatible root').changeSet;
+      const root = store.proposeChange({
+        hostSessionRef: 'host-a',
+        changeSetId: changeSet.id,
+        expectedChangeSetVersion: changeSet.version,
+        operation: 'create_node',
+        payload: {
+          nodeType: 'goal',
+          displayTitle: 'Compatible design root',
+          contentText: '',
+          roles: ['design-root'],
+          attributes: {},
+          approvalState: 'tentative',
+          epistemicState: null,
+          reviewState: 'clean',
+        },
+        summary: 'Create compatible design root',
+      });
+      changeSet = root.changeSet;
+      let grant = store.issueApprovalGrant('adopt', root.change.id, 'host-a');
+      const adopted = store.adoptChange('host-a', root.change.id, grant.token);
+      expect(adopted.adoptedChanges).toHaveLength(1);
+      expect(store.getWorkspaceSummary()).toEqual(
+        expect.objectContaining({ nodeCount: 1, relationCount: 0 }),
+      );
+
+      grant = store.issueApprovalGrant('confirm_root', root.change.entityId, 'host-a');
+      changeSet = store.confirmRoot('host-a', root.change.entityId, grant.token).changeSet;
+      const checked = store.validateChangeSet('host-a', changeSet.id, changeSet.version);
+      expect(checked.validation.valid).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
   it('archives and clears while another MCP-style database connection remains open', async () => {
     const dir = workspace();
     const statePath = join(dir, '.treediagram');

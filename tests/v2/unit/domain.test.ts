@@ -131,6 +131,12 @@ describe('V2 domain contracts', () => {
     );
   });
 
+  it('recognizes design-root as a compatible root role', () => {
+    const result = checkConsistency([node('root-node', ['design-root'])], []);
+    expect(result.valid).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
   it('computes stable digests independent of object key order', () => {
     expect(stableDigest({ b: 2, a: { d: 4, c: 3 } })).toBe(
       stableDigest({ a: { c: 3, d: 4 }, b: 2 }),

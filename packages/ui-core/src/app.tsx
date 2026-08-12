@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import type {
-  AttentionContext,
-  ChangeSet,
-  DesignChange,
-  NodeDetail,
-  RelationDetail,
+import {
+  hasDesignRootRole,
+  type AttentionContext,
+  type ChangeSet,
+  type DesignChange,
+  type NodeDetail,
+  type RelationDetail,
 } from '@treediagram/contracts';
 import { getUiIdentity, SidecarApi, type BootstrapData, type UiIdentity } from './api.js';
 
@@ -562,7 +563,7 @@ function DesignTree({
           >
             {selectedCandidates.has(change.id)
               ? 'Agent 可见'
-              : roles.includes('root')
+              : hasDesignRootRole(roles)
                 ? '候选根'
                 : '候选'}
           </span>
@@ -646,7 +647,7 @@ function DesignTree({
           <span className="tree-title" title={projectedTitle}>
             {projectedTitle}
           </span>
-          {node.revision.roles.includes('root') ? (
+          {hasDesignRootRole(node.revision.roles) ? (
             <span className="micro-badge root">ROOT</span>
           ) : null}
           {node.revision.reviewState !== 'clean' ? (
@@ -728,7 +729,7 @@ function DesignTree({
     : [];
   const candidateRoots = proposedNodes.filter((change) => {
     const roles = Array.isArray(change.payload['roles']) ? change.payload['roles'] : [];
-    return !placedCandidateIds.has(change.entityId) && roles.includes('root');
+    return !placedCandidateIds.has(change.entityId) && hasDesignRootRole(roles);
   });
   const candidateRootIds = new Set(candidateRoots.map((change) => change.entityId));
   const unplacedCandidates = proposedNodes.filter(
@@ -933,7 +934,7 @@ function Inspector({
         change.payload['sourceNodeId'] === node.node.id ||
         change.payload['targetNodeId'] === node.node.id),
   );
-  const isRoot = node.revision.roles.includes('root');
+  const isRoot = hasDesignRootRole(node.revision.roles);
   return (
     <section className="inspector panel-surface">
       <header className="inspector-header">
@@ -1110,7 +1111,7 @@ function ChangePanel({
     if (relation.payload['relationType'] !== 'contains') return false;
     const child = pendingNodeByEntityId.get(String(relation.payload['targetNodeId'] ?? ''));
     const roles = Array.isArray(child?.payload['roles']) ? child.payload['roles'] : [];
-    return Boolean(child) && !roles.includes('root');
+    return Boolean(child) && !hasDesignRootRole(roles);
   });
   const bundledContainsIds = new Set(bundledContainsRelations.map((change) => change.id));
   const pendingReviewChanges = pending.filter((change) => !bundledContainsIds.has(change.id));
@@ -1325,7 +1326,8 @@ function ChangePanel({
             (nodeId) => !pendingNodeByEntityId.has(nodeId),
           );
           const nodeRoles = Array.isArray(change.payload['roles']) ? change.payload['roles'] : [];
-          const isRootCandidate = change.operation === 'create_node' && nodeRoles.includes('root');
+          const isRootCandidate =
+            change.operation === 'create_node' && hasDesignRootRole(nodeRoles);
           const containsAttachments =
             change.operation === 'create_node'
               ? pendingRelationChanges.filter(

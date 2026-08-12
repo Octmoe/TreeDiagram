@@ -39,6 +39,8 @@ const revisionContent = {
   contentText: { type: 'string', maxLength: 50000 },
   roles: {
     type: 'array',
+    description:
+      'Semantic roles. Use root (canonical) or design-root (compatible alias) only for the single design-tree root; such a node has no contains parent.',
     items: { type: 'string', minLength: 1, maxLength: 64 },
     maxItems: 32,
     uniqueItems: true,
