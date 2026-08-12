@@ -268,7 +268,15 @@ test('Sidecar completes focus, recovery, proposal, approval and validation flows
   ).toBeGreaterThanOrEqual(14);
   await nodeCard.getByText('技术详情与原始 JSON').click();
   await expect(nodeCard.locator('pre')).toBeVisible();
-  await nodeCard.getByRole('button', { name: '批准并挂载' }).click();
+  await page.getByRole('button', { name: '一键批准全部候选' }).click();
+  const batchApprovalDialog = page.getByRole('dialog', {
+    name: '批准整棵工作树的全部候选',
+  });
+  await expect(batchApprovalDialog).toContainText('计算安全顺序');
+  await expect(batchApprovalDialog).toContainText('若存在依赖环、端点缺失、多个父节点或修订冲突');
+  await expect(batchApprovalDialog.getByText('2', { exact: true })).toBeVisible();
+  await batchApprovalDialog.getByRole('button', { name: '确认并批准全部' }).click();
+  await expect(page.getByText('全部候选已按依赖顺序批准')).toBeVisible();
   await expect(page.locator('.tree-title', { hasText: 'Cross-session focus drift' })).toBeVisible();
   await expect(page.getByText('候选队列已清空')).toBeVisible();
   await expect(

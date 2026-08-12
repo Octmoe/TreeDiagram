@@ -1175,7 +1175,7 @@ select:focus-visible {
 
 .changes-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
 }
 .lease-card {
   display: flex;
@@ -1315,6 +1315,34 @@ select:focus-visible {
   font-size: 9px;
   line-height: 1.3;
   text-align: center;
+}
+.batch-approval-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 11px 9px;
+  padding: 10px;
+  border: 1px solid #c7f36b44;
+  border-radius: 9px;
+  background: linear-gradient(100deg, #c7f36b0d, #7297ff08);
+}
+.batch-approval-bar > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.batch-approval-bar strong {
+  color: var(--text);
+  font-size: 11px;
+}
+.batch-approval-bar span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+.batch-approval-bar .button {
+  flex: 0 0 auto;
 }
 .change-scroll {
   padding: 0 10px 12px;
@@ -2000,6 +2028,35 @@ select:focus-visible {
   padding-top: 13px;
   border-top: 1px solid var(--line);
 }
+.batch-approval-dialog {
+  border-color: #c7f36b55;
+}
+.batch-approval-facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #080b0f;
+}
+.batch-approval-facts > div {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 12px 8px;
+}
+.batch-approval-facts > div + div {
+  border-left: 1px solid var(--line);
+}
+.batch-approval-facts span {
+  color: var(--faint);
+  font-size: 9px;
+  text-align: center;
+}
+.batch-approval-facts strong {
+  color: var(--green);
+  font-size: 17px;
+}
 .lifecycle-complete-screen {
   min-height: 100%;
   display: grid;
@@ -2341,6 +2398,7 @@ body {
 :root[data-theme='light'] .history-card div,
 :root[data-theme='light'] .lease-card,
 :root[data-theme='light'] .change-summary div,
+:root[data-theme='light'] .batch-approval-facts,
 :root[data-theme='light'] .approval-dependency,
 :root[data-theme='light'] .change-fields > div,
 :root[data-theme='light'] .change-attributes dl > div,
@@ -2453,6 +2511,10 @@ body {
 :root[data-theme='light'] .change-card {
   background: #ffffff;
   box-shadow: 0 3px 12px #2330440a;
+}
+:root[data-theme='light'] .batch-approval-bar {
+  border-color: #547d0838;
+  background: linear-gradient(100deg, #547d080d, #3c63c708);
 }
 :root[data-theme='light'] .change-card.active {
   box-shadow:

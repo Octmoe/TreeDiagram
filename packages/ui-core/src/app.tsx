@@ -1157,6 +1157,8 @@ function ChangePanel({
   const [editing, setEditing] = useState<string | null>(null);
   const [payload, setPayload] = useState('');
   const [summary, setSummary] = useState('');
+  const [batchApprovalOpen, setBatchApprovalOpen] = useState(false);
+  const [batchApprovalBusy, setBatchApprovalBusy] = useState(false);
   const changes = changeSet?.changes ?? [];
   const pending = changes.filter((change) => change.status === 'proposed');
   const adopted = changes.filter((change) => change.status === 'adopted');
@@ -1185,6 +1187,9 @@ function ChangePanel({
     const title = change.payload['displayTitle'];
     if (typeof title === 'string') nodeTitles.set(change.entityId, title);
   }
+  useEffect(() => {
+    if (!pending.length) setBatchApprovalOpen(false);
+  }, [pending.length]);
 
   if (!changeSet)
     return (
@@ -1243,6 +1248,22 @@ function ChangePanel({
         }),
       '候选已修订',
     ).then(() => setEditing(null));
+  };
+  const approveAll = async () => {
+    setBatchApprovalBusy(true);
+    try {
+      const result = await run(
+        () =>
+          api.action<{ adoptedChanges: DesignChange[]; adoptionOrder: string[] }>('adopt_all', {
+            targetId: changeSet.id,
+            hostSessionRef: identity.hostSessionRef,
+          }),
+        '全部候选已按依赖顺序批准',
+      );
+      if (result) setBatchApprovalOpen(false);
+    } finally {
+      setBatchApprovalBusy(false);
+    }
   };
 
   return (
@@ -1347,11 +1368,29 @@ function ChangePanel({
           <span>已丢弃</span>
         </div>
       </div>
+      {pending.length ? (
+        <div className="batch-approval-bar">
+          <div>
+            <strong>整树批量批准</strong>
+            <span>先分析父子层级与关系端点，再原子采用全部 {pending.length} 条变更</span>
+          </div>
+          <button
+            className="button primary"
+            type="button"
+            disabled={!ownLease}
+            title={ownLease ? '检查完整依赖图后一次批准全部候选' : '请先取得当前 ChangeSet 写入权'}
+            onClick={() => setBatchApprovalOpen(true)}
+          >
+            一键批准全部候选
+          </button>
+        </div>
+      ) : null}
       <div className="change-scroll">
         {pending.length ? (
           <details className="approval-guide">
             <summary>自上而下批准规则</summary>
             <ol>
+              <li>“一键批准全部”会先拓扑排序完整依赖图；任何阻塞都会使整批不写入。</li>
               <li>根节点可直接批准；其他节点必须先批准父节点。</li>
               <li>批准子节点时，它的 contains 挂载关系在同一事务中一并批准。</li>
               <li>supports、depends_on 等语义关系仍作为独立决策审查。</li>
@@ -1677,6 +1716,70 @@ function ChangePanel({
           发布 Release <span>↗</span>
         </button>
       </footer>
+      {batchApprovalOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="lifecycle-dialog batch-approval-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="batch-approval-title"
+          >
+            <header>
+              <div>
+                <small>ATOMIC TREE APPROVAL</small>
+                <h2 id="batch-approval-title">批准整棵工作树的全部候选</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="取消"
+                disabled={batchApprovalBusy}
+                onClick={() => setBatchApprovalOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <p>
+              这表示你确认当前 ChangeSet 中的全部候选。系统会先分析 contains
+              父子层级和其它关系端点，
+              计算安全顺序，再在一个事务中批准；若存在依赖环、端点缺失、多个父节点或修订冲突，
+              将不会批准任何一项。
+            </p>
+            <div className="batch-approval-facts">
+              <div>
+                <span>待确认决策</span>
+                <strong>{pendingReviewChanges.length}</strong>
+              </div>
+              <div>
+                <span>实际变更总数</span>
+                <strong>{pending.length}</strong>
+              </div>
+              <div>
+                <span>随子节点批准的 contains</span>
+                <strong>{bundledContainsRelations.length}</strong>
+              </div>
+            </div>
+            <footer>
+              <button
+                className="button ghost"
+                type="button"
+                disabled={batchApprovalBusy}
+                onClick={() => setBatchApprovalOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                className="button primary"
+                type="button"
+                disabled={batchApprovalBusy}
+                onClick={() => void approveAll()}
+              >
+                {batchApprovalBusy ? '正在分析依赖…' : '确认并批准全部'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </aside>
   );
 }
