@@ -12,7 +12,7 @@ export interface SidecarLifecycleOptions {
   projectRoot: string;
   archivePath: string;
   requestClose: () => void;
-  requestClear: (archivePath: string) => void;
+  requestClear: (archivePath: string) => Promise<void>;
 }
 
 const MIME: Record<string, string> = {
@@ -56,9 +56,17 @@ export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions
   });
   const tools = new ToolService(store);
   const attention = new AttentionService(store);
+  let workspaceMaintenance = false;
 
   app.addHook('onRequest', async (request, reply) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return;
+    if (workspaceMaintenance)
+      return reply.code(409).send({
+        error: {
+          code: 'WORKSPACE_MAINTENANCE',
+          message: '工作区正在归档清空，暂时不接受其它写操作。',
+        },
+      });
     const origin = request.headers.origin;
     if (!origin) return;
     const expected = `http://${request.headers.host}`;
@@ -159,8 +167,19 @@ export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions
           message: `请输入完整项目名称“${store.meta.displayName}”以确认归档清空。`,
         },
       });
-    lifecycle.requestClear(lifecycle.archivePath);
-    return { accepted: true, mode: 'clear', archivePath: lifecycle.archivePath };
+    workspaceMaintenance = true;
+    try {
+      await lifecycle.requestClear(lifecycle.archivePath);
+      return {
+        accepted: true,
+        completed: true,
+        mode: 'clear',
+        archivePath: lifecycle.archivePath,
+      };
+    } catch (error) {
+      workspaceMaintenance = false;
+      throw error;
+    }
   });
 
   app.post('/api/v2/tools/:name', async (request, reply) => {
@@ -279,11 +298,7 @@ export function buildSidecar(store: V2Store, lifecycle?: SidecarLifecycleOptions
   return app;
 }
 
-export {
-  archiveWorkspace,
-  createWorkspaceArchivePath,
-  scheduleWorkspaceArchive,
-} from './archive.js';
+export { archiveAndClearWorkspace, createWorkspaceArchivePath } from './archive.js';
 
 function required(value: Record<string, unknown>, key: string): string {
   const item = value[key];

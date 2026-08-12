@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { basename, dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { workspacePaths, type V2Store } from '@treediagram/storage-sqlite';
 
 const STATE_DIRECTORY = '.treediagram';
 const ARCHIVE_DIRECTORY = '.treediagram-archive';
@@ -43,86 +42,53 @@ function assertArchiveTarget(
   return { statePath: join(root, STATE_DIRECTORY), targetPath };
 }
 
-export function archiveWorkspace(projectRoot: string, archivePath: string): string {
+function copyIfPresent(source: string, target: string): void {
+  if (existsSync(source)) copyFileSync(source, target);
+}
+
+export async function archiveAndClearWorkspace(
+  store: V2Store,
+  projectRoot: string,
+  archivePath: string,
+): Promise<string> {
   const { statePath, targetPath } = assertArchiveTarget(projectRoot, archivePath);
   if (!existsSync(statePath)) throw new Error(`工作区状态目录不存在: ${statePath}`);
   if (existsSync(targetPath)) throw new Error(`归档目录已存在: ${targetPath}`);
   mkdirSync(dirname(targetPath), { recursive: true });
-  renameSync(statePath, targetPath);
-  return targetPath;
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-async function waitForProcessExit(pid: number): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  while (processExists(pid)) {
-    if (Date.now() >= deadline) throw new Error(`等待 Sidecar 进程 ${pid} 退出超时。`);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 120));
-  }
-}
-
-export function scheduleWorkspaceArchive(
-  projectRoot: string,
-  archivePath: string,
-  waitForPid = process.pid,
-): void {
-  assertArchiveTarget(projectRoot, archivePath);
-  const child = spawn(
-    process.execPath,
-    [
-      fileURLToPath(import.meta.url),
-      '--project',
-      resolve(projectRoot),
-      '--archive',
-      resolve(archivePath),
-      '--wait-pid',
-      String(waitForPid),
-    ],
-    { detached: true, stdio: 'ignore', windowsHide: true },
-  );
-  child.unref();
-}
-
-function option(name: string): string | undefined {
-  const index = process.argv.indexOf(`--${name}`);
-  return index >= 0 ? process.argv[index + 1] : undefined;
-}
-
-async function main(): Promise<void> {
-  const projectRoot = option('project');
-  const archivePath = option('archive');
-  const waitPid = Number(option('wait-pid'));
-  if (!projectRoot || !archivePath || !Number.isInteger(waitPid) || waitPid <= 0)
-    throw new Error('归档助手缺少 --project、--archive 或 --wait-pid。');
-  await waitForProcessExit(waitPid);
-  archiveWorkspace(projectRoot, archivePath);
-}
-
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === invokedPath) {
-  main().catch((error) => {
-    const projectRoot = option('project');
-    const archivePath = option('archive');
-    const fallbackRoot = projectRoot
-      ? join(resolve(projectRoot), ARCHIVE_DIRECTORY)
-      : dirname(resolve(archivePath ?? process.cwd()));
+  const paths = workspacePaths(projectRoot);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const stagingPath = `${targetPath}.pending-${process.pid}-${attempt}`;
+    rmSync(stagingPath, { recursive: true, force: true });
+    mkdirSync(stagingPath);
     try {
-      mkdirSync(fallbackRoot, { recursive: true });
+      const expectedDataVersion = store.dataVersion();
+      await store.connection.backup(join(stagingPath, 'state-v2.sqlite'));
+      copyIfPresent(paths.metaPath, join(stagingPath, 'workspace.json'));
+      copyIfPresent(join(statePath, 'sidecar.json'), join(stagingPath, 'sidecar.json'));
+      copyIfPresent(join(statePath, 'sidecar.log'), join(stagingPath, 'sidecar.log'));
       writeFileSync(
-        join(fallbackRoot, `archive-error-${Date.now()}-${basename(archivePath ?? 'unknown')}.log`),
-        `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+        join(stagingPath, 'archive.json'),
+        `${JSON.stringify(
+          {
+            format: 'treediagram-v2-archive',
+            workspaceId: store.meta.workspaceId,
+            displayName: store.meta.displayName,
+            projectRoot: resolve(projectRoot),
+            archivedAt: new Date().toISOString(),
+            method: 'sqlite-online-backup-and-transactional-clear',
+          },
+          null,
+          2,
+        )}\n`,
         'utf8',
       );
-    } finally {
-      process.exitCode = 1;
+      renameSync(stagingPath, targetPath);
+      if (store.clearWorkspaceDataIfUnchanged(expectedDataVersion)) return targetPath;
+      rmSync(targetPath, { recursive: true, force: true });
+    } catch (error) {
+      rmSync(stagingPath, { recursive: true, force: true });
+      throw error;
     }
-  });
+  }
+  throw new Error('归档期间工作区持续发生写入；未清空任何数据，请停止其它 Agent 后重试。');
 }

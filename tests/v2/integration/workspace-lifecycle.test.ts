@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, uptime } from 'node:os';
 import { AttentionService } from '@treediagram/attention';
@@ -7,7 +7,7 @@ import { CHANGESET_LEASE_IDLE_TIMEOUT_MS } from '@treediagram/contracts';
 import { DomainError } from '@treediagram/domain';
 import { initializeWorkspace, V2Store } from '@treediagram/storage-sqlite';
 import { ToolService } from '@treediagram/mcp';
-import { archiveWorkspace, createWorkspaceArchivePath } from '@treediagram/sidecar/server';
+import { archiveAndClearWorkspace, createWorkspaceArchivePath } from '@treediagram/sidecar/server';
 
 const tempDirs: string[] = [];
 const workspace = () => {
@@ -21,19 +21,55 @@ afterEach(() => {
 });
 
 describe('V2 workspace lifecycle', () => {
-  it('moves cleared workspace state into a project-local archive without deleting history', () => {
+  it('archives and clears while another MCP-style database connection remains open', async () => {
     const dir = workspace();
     const statePath = join(dir, '.treediagram');
+    const store = new V2Store(dir);
+    const heldConnection = new V2Store(dir);
+    store.beginChangeSet('archive-owner', 'Preserve this design history');
     const archivePath = createWorkspaceArchivePath(
       dir,
       'a761884f-45dc-4c32-a0b4-0ca8737fe49b',
       new Date('2026-08-11T08:09:10.000Z'),
     );
     expect(archivePath).toBe(join(dir, '.treediagram-archive', '20260811T080910Z-a761884f'));
-    expect(archiveWorkspace(dir, archivePath)).toBe(archivePath);
-    expect(existsSync(statePath)).toBe(false);
-    expect(existsSync(join(archivePath, 'workspace.json'))).toBe(true);
-    expect(existsSync(join(archivePath, 'state-v2.sqlite'))).toBe(true);
+    try {
+      expect(await archiveAndClearWorkspace(store, dir, archivePath)).toBe(archivePath);
+      expect(existsSync(statePath)).toBe(true);
+      expect(existsSync(join(archivePath, 'workspace.json'))).toBe(true);
+      expect(existsSync(join(archivePath, 'state-v2.sqlite'))).toBe(true);
+      expect(existsSync(join(archivePath, 'archive.json'))).toBe(true);
+      expect(store.getWorkspaceSummary()).toEqual(
+        expect.objectContaining({
+          activeChangeSetId: null,
+          currentReleaseId: null,
+          nodeCount: 0,
+          relationCount: 0,
+          consistency: 'empty',
+        }),
+      );
+      expect(heldConnection.getWorkspaceSummary()).toEqual(
+        expect.objectContaining({ activeChangeSetId: null, consistency: 'empty' }),
+      );
+
+      const restoreRoot = mkdtempSync(join(tmpdir(), 'treediagram-v2-archive-restore-'));
+      tempDirs.push(restoreRoot);
+      cpSync(archivePath, join(restoreRoot, '.treediagram'), { recursive: true });
+      const restored = new V2Store(restoreRoot);
+      try {
+        expect(restored.getWorkspaceSummary()).toEqual(
+          expect.objectContaining({
+            activeChangeSetId: expect.any(String),
+            consistency: 'empty',
+          }),
+        );
+      } finally {
+        restored.close();
+      }
+    } finally {
+      heldConnection.close();
+      store.close();
+    }
   });
 
   it('refuses a legacy workspace without modifying it', () => {

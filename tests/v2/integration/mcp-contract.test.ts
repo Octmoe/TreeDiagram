@@ -175,7 +175,9 @@ describe('MCP and Sidecar transports', () => {
       projectRoot: join(tmpdir(), 'project'),
       archivePath,
       requestClose: () => calls.push('close'),
-      requestClear: (path) => calls.push(`clear:${path}`),
+      requestClear: async (path) => {
+        calls.push(`clear:${path}`);
+      },
     });
     try {
       const bootstrap = await app.inject({
@@ -203,12 +205,22 @@ describe('MCP and Sidecar transports', () => {
         url: '/api/v2/workspace/clear',
         payload: { confirmationText: 'MCP contract' },
       });
-      expect(accepted.json()).toEqual({ accepted: true, mode: 'clear', archivePath });
+      expect(accepted.json()).toEqual({
+        accepted: true,
+        completed: true,
+        mode: 'clear',
+        archivePath,
+      });
       expect(calls).toEqual([`clear:${archivePath}`]);
 
       const closed = await app.inject({ method: 'POST', url: '/api/v2/workspace/close' });
-      expect(closed.json()).toEqual({ accepted: true, mode: 'close' });
-      expect(calls).toEqual([`clear:${archivePath}`, 'close']);
+      expect(closed.statusCode).toBe(409);
+      expect(closed.json()).toEqual(
+        expect.objectContaining({
+          error: expect.objectContaining({ code: 'WORKSPACE_MAINTENANCE' }),
+        }),
+      );
+      expect(calls).toEqual([`clear:${archivePath}`]);
     } finally {
       await app.close();
       store.close();

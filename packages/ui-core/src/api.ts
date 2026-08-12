@@ -90,7 +90,7 @@ export class SidecarApi {
 
   clearWorkspace(
     confirmationText: string,
-  ): Promise<{ accepted: true; mode: 'clear'; archivePath: string }> {
+  ): Promise<{ accepted: true; completed: true; mode: 'clear'; archivePath: string }> {
     return fetch(`${this.baseUrl}/api/v2/workspace/clear`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

@@ -37,7 +37,7 @@ const app = buildSidecar(store, {
   projectRoot: workspaceDir,
   archivePath: createWorkspaceArchivePath(workspaceDir, store.meta.workspaceId),
   requestClose: () => undefined,
-  requestClear: () => undefined,
+  requestClear: async () => undefined,
 });
 await app.listen({ host: '127.0.0.1', port: 4321 });
 

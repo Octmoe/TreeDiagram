@@ -2,7 +2,7 @@ import { basename, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { initializeWorkspace, V2Store, workspacePaths } from '@treediagram/storage-sqlite';
 import { buildSidecar } from './app.js';
-import { createWorkspaceArchivePath, scheduleWorkspaceArchive } from './archive.js';
+import { archiveAndClearWorkspace, createWorkspaceArchivePath } from './archive.js';
 
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -17,18 +17,14 @@ if (!existsSync(workspacePaths(workspaceDir).metaPath))
 const store = new V2Store(workspaceDir);
 const archivePath = createWorkspaceArchivePath(workspaceDir, store.meta.workspaceId);
 let shuttingDown = false;
-let archiveScheduled = false;
 const app = buildSidecar(store, {
   projectRoot: workspaceDir,
   archivePath,
   requestClose: () => {
     setTimeout(() => void shutdown(), 180);
   },
-  requestClear: (targetPath) => {
-    if (!archiveScheduled) {
-      scheduleWorkspaceArchive(workspaceDir, targetPath);
-      archiveScheduled = true;
-    }
+  requestClear: async (targetPath) => {
+    await archiveAndClearWorkspace(store, workspaceDir, targetPath);
     setTimeout(() => void shutdown(), 180);
   },
 });

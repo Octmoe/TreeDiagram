@@ -75,6 +75,44 @@ export class V2Store {
     this.connection.close();
   }
 
+  dataVersion(): number {
+    return Number(this.connection.pragma('data_version', { simple: true }));
+  }
+
+  clearWorkspaceDataIfUnchanged(expectedDataVersion: number): boolean {
+    return this.connection
+      .transaction(() => {
+        if (this.dataVersion() !== expectedDataVersion) return false;
+        this.connection.exec(`
+          DELETE FROM host_session_binding;
+          DELETE FROM attention_context;
+          DELETE FROM agent_activity;
+          DELETE FROM approval_grant;
+          DELETE FROM delegation_policy;
+          DELETE FROM changeset_lease_handoff_request;
+          DELETE FROM changeset_write_lease;
+          DELETE FROM release_relation;
+          DELETE FROM release_node;
+          DELETE FROM working_relation_head;
+          DELETE FROM working_node_head;
+          DELETE FROM design_change;
+          DELETE FROM relation_revision;
+          DELETE FROM relation;
+          DELETE FROM node_revision;
+          DELETE FROM node;
+          DELETE FROM release;
+          DELETE FROM change_set;
+          DELETE FROM event_outbox;
+          DELETE FROM sqlite_sequence WHERE name = 'event_outbox';
+        `);
+        this.connection
+          .prepare('UPDATE workspace SET current_release_id = NULL, updated_at = ? WHERE id = ?')
+          .run(nowIso(), this.meta.workspaceId);
+        return true;
+      })
+      .immediate();
+  }
+
   emit(
     eventType: string,
     payload: Record<string, unknown>,

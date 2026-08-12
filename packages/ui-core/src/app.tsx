@@ -1851,10 +1851,10 @@ export function TreeDiagramApp({
     return (
       <div className="lifecycle-complete-screen">
         <span className="brand-mark">T</span>
-        <h1>{lifecycleComplete.mode === 'clear' ? '工作区已进入归档清空流程' : '工作区已关闭'}</h1>
+        <h1>{lifecycleComplete.mode === 'clear' ? '工作区已归档并清空' : '工作区已关闭'}</h1>
         <p>
           {lifecycleComplete.mode === 'clear'
-            ? 'Sidecar 退出后会把完整历史移动到下方归档目录。下次 Agent 使用此项目时会启动一个新的空工作区。'
+            ? '完整历史已经写入下方归档目录，活动工作区也已清空；Sidecar 正在关闭。下次 Agent 使用此项目时会打开空工作区。'
             : '设计数据仍保留在项目中。下次 Agent 使用 TreeDiagram 时，可能会自动触发 Sidecar 启动流程。'}
         </p>
         {lifecycleComplete.archivePath ? (
