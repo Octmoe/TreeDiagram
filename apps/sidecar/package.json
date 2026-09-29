@@ -22,13 +22,13 @@
     "@treediagram/mcp": "*",
     "@treediagram/storage-sqlite": "*",
     "@treediagram/ui-core": "*",
-    "fastify": "^5.11.2",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "fastify": "^5.12.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.1.1",
     "vite": "^8.1.0"
   }
